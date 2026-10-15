@@ -8,6 +8,9 @@ export const HUB_DIR = process.env.PROJECT_HUB_DIR ?? path.join(os.homedir(), '.
 export const PROJECTS_FILE = path.join(HUB_DIR, 'projects.yaml');
 export const DB_FILE = path.join(HUB_DIR, 'hub.db');
 export const LOG_DIR = path.join(HUB_DIR, 'logs');
+export const TOKEN_FILE = path.join(HUB_DIR, 'token');
+export const HOOK_SCRIPT = path.join(HUB_DIR, 'hub-hook.sh');
+export const BACKUP_DIR = path.join(HUB_DIR, 'backups');
 
 // Bound to loopback only, so the hub is reachable only from this machine.
 export const HOST = '127.0.0.1';

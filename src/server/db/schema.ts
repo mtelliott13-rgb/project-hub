@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Identity and match rules for each project. projects.yaml is the source of
 // truth for the match rules; colour, pinned and archived belong to the hub.
@@ -19,3 +19,29 @@ export const projects = sqliteTable('projects', {
 });
 
 export type Project = typeof projects.$inferSelect;
+
+// One row per Claude Code session, from hooks or the SDK backfill.
+// Prompts are never stored: not from hooks, and not via the SDK summary.
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    // Null means no project matched the folder; Phase 4 files these from the Inbox.
+    projectSlug: text('project_slug').references(() => projects.slug),
+    cwd: text('cwd').notNull(),
+    transcriptPath: text('transcript_path'),
+    title: text('title'),
+    model: text('model'),
+    gitBranch: text('git_branch'),
+    // Where it ran, as `claude agents --json` reports it (e.g. "interactive").
+    kind: text('kind'),
+    state: text('state', { enum: ['running', 'ended'] }).notNull(),
+    endReason: text('end_reason'),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+    lastActiveAt: integer('last_active_at', { mode: 'timestamp_ms' }).notNull(),
+    endedAt: integer('ended_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('sessions_project_idx').on(t.projectSlug, t.lastActiveAt)],
+);
+
+export type Session = typeof sessions.$inferSelect;
