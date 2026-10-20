@@ -6,6 +6,7 @@ import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listAllProjects, type Db } from './db/index.ts';
 import { projects, sessions } from './db/schema.ts';
+import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
@@ -14,7 +15,7 @@ import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
 import { applyHookEvent, hookPayloadSchema, sessionsForProjects } from './sessions.ts';
 import { tokenMatches } from './token.ts';
 
-type AppDeps = {
+type AppDeps = DocDeps & {
   db: Db;
   webDir: string;
   token: string;
@@ -65,11 +66,12 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
-  // Everything that changes something, or lists folders, must come from the
-  // hub page with its token. Plain reads of hub state (projects, events) don't.
+  // Every API call must come from the hub page with its token, except the
+  // health check and the event stream (EventSource can't send headers, and
+  // it carries no data, only "something changed").
   app.use('/api/*', async (c, next) => {
-    const guarded = c.req.method !== 'GET' || c.req.path.startsWith('/api/folders');
-    if (guarded) {
+    const open = c.req.method === 'GET' && (c.req.path === '/api/health' || c.req.path === '/api/events');
+    if (!open) {
       const refusal = hubPageRefusal(c, origins, uiToken);
       if (refusal) return c.json({ error: refusal }, 403);
     }
@@ -112,6 +114,8 @@ export function createApp(deps: AppDeps) {
   app.post('/api/projects/:slug/archive', (c) => projectWrite(c, () => store.setArchived(c.req.param('slug'), true)));
   app.post('/api/projects/:slug/unarchive', (c) => projectWrite(c, () => store.setArchived(c.req.param('slug'), false)));
   app.delete('/api/projects/:slug', (c) => projectWrite(c, () => ({ unfiledSessions: store.remove(c.req.param('slug')) })));
+
+  addDocRoutes(app, deps);
 
   // The folder picker.
   app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));

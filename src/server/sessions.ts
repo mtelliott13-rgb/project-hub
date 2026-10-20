@@ -97,11 +97,16 @@ export function syncFromSdk(db: Db, infos: SDKSessionInfo[], projects: Project[]
 
 export const agentSchema = z.object({
   sessionId: z.string(),
+  pid: z.number().optional(),
   cwd: z.string(),
   kind: z.string().optional(),
   startedAt: z.number().optional(),
 });
 export type RunningAgent = z.infer<typeof agentSchema>;
+
+/** Drops the hub's own headless runs (Monetize > Generate), which aren't your sessions. */
+export const withoutPids = (agents: RunningAgent[], pids: ReadonlySet<number>) =>
+  agents.filter((a) => a.pid === undefined || !pids.has(a.pid));
 
 /**
  * Marks sessions listed by `claude agents --json` as running. A session that

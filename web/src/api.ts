@@ -43,3 +43,27 @@ export const deleteProject = (slug: string) =>
 export const folderSuggestions = () => hub<FolderEntry[]>('/api/folders/suggestions');
 export const browseFolder = (path?: string) =>
   hub<Browse>(`/api/folders/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`);
+
+// Phase 4: notes, Monetize drafts, ideas.
+export type Saved = { savedAt: string };
+export type DraftMeta = { id: string; generatedAt: string; costUsd: number | null; editedAt: string | null };
+export type Draft = DraftMeta & { text: string };
+export type MonetizeJob = { state: 'running'; startedAt: string } | { state: 'failed'; error: string; at: string } | null;
+export type Idea = { line: number; text: string; scope: string; done: boolean; added: string | null; doneOn: string | null };
+
+export const fetchNotes = (slug: string) => hub<{ text: string; savedAt: string | null }>(`/api/projects/${slug}/notes`);
+export const saveNotes = (slug: string, text: string) => hub<Saved>(`/api/projects/${slug}/notes`, { method: 'PUT', body: { text } });
+
+export const fetchMonetize = (slug: string) =>
+  hub<{ drafts: DraftMeta[]; job: MonetizeJob; command: string }>(`/api/projects/${slug}/monetize`);
+export const fetchDraft = (slug: string, id: string) => hub<Draft>(`/api/projects/${slug}/monetize/${id}`);
+export const saveDraft = (slug: string, id: string, text: string) =>
+  hub<Saved>(`/api/projects/${slug}/monetize/${id}`, { method: 'PUT', body: { text } });
+export const generateDraft = (slug: string) => hub<{ ok: true }>(`/api/projects/${slug}/monetize/generate`, { method: 'POST', body: {} });
+
+type Ideas = { items: Idea[] };
+export const fetchIdeas = () => hub<Ideas & { file: string }>('/api/ideas');
+export const addIdea = (text: string, scope: string) => hub<Ideas>('/api/ideas', { method: 'POST', body: { text, scope } });
+export const changeIdea = (idea: Idea, change: { text?: string; scope?: string; done?: boolean }) =>
+  hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'PUT', body: { expect: idea.text, ...change } });
+export const deleteIdea = (idea: Idea) => hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'DELETE', body: { expect: idea.text } });

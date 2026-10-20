@@ -189,7 +189,7 @@ describe('POST /api/launch', () => {
 
   it('refuses GET and bad bodies', async () => {
     const { app, launch, launched } = setup();
-    expect((await app.request(`${HUB}/api/launch`)).status).toBe(404);
+    expect((await app.request(`${HUB}/api/launch`, { headers: { 'X-Hub-Token': 'ui-t0ken' } })).status).toBe(404);
     expect((await launch({}, '{not json')).status).toBe(400);
     expect((await launch({}, { kind: 'session', sessionId: 'x' })).status).toBe(400);
     expect((await launch({}, { kind: 'editor', slug: 'acme', path: '/etc' })).status).toBe(400);

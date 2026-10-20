@@ -6,7 +6,7 @@ import { createApp } from '../src/server/app.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { listActiveProjects, openDb, syncProjects } from '../src/server/db/index.ts';
 import { parseProjects } from '../src/server/projects.ts';
-import { HUB, testDeps } from './helpers.ts';
+import { HUB, PAGE_GET, testDeps } from './helpers.ts';
 
 const SPEC_EXAMPLE = `
 projects:
@@ -70,7 +70,7 @@ describe('database sync and API', () => {
     const db = freshDb();
     syncProjects(db, parseProjects(SPEC_EXAMPLE));
     const app = createApp(testDeps(db).deps);
-    const res = await app.request(`${HUB}/api/projects`);
+    const res = await app.request(`${HUB}/api/projects`, { headers: PAGE_GET });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(1);

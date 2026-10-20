@@ -14,7 +14,7 @@ const splitList = (s: string) =>
 const inputClass = 'w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-950';
 
 /** `project` absent means Add. */
-export function ProjectForm({ project, onClose }: { project?: ProjectDto; onClose: () => void }) {
+export function ProjectForm({ project, onClose, onDeleted }: { project?: ProjectDto; onClose: () => void; onDeleted?: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(project?.name ?? '');
   const [repos, setRepos] = useState(project?.repos ?? []);
@@ -49,7 +49,16 @@ export function ProjectForm({ project, onClose }: { project?: ProjectDto; onClos
   };
 
   if (project && confirmingDelete) {
-    return <ConfirmDelete project={project} onCancel={() => setConfirmingDelete(false)} onDeleted={done} />;
+    return (
+      <ConfirmDelete
+        project={project}
+        onCancel={() => setConfirmingDelete(false)}
+        onDeleted={() => {
+          done();
+          onDeleted?.();
+        }}
+      />
+    );
   }
 
   return (

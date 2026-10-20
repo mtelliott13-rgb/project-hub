@@ -114,15 +114,40 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
 }
 
 /**
- * Reloads when projects.yaml changes on disk. Watches the folder, since
- * editors and the hub itself replace the file rather than write into it.
+ * Calls `reload` when a file changes on disk, e.g. projects.yaml. Watches the
+ * folder, since editors and the hub itself replace the file rather than
+ * write into it. macOS file events can arrive late or not at all, so a
+ * once-a-second check of the file's size, time and inode backs them up.
  */
-export function watchProjectsFile(file: string, reload: () => void): fs.FSWatcher {
+export function watchFile(file: string, reload: () => void, pollMs = 1000): { close: () => void } {
   let timer: NodeJS.Timeout | undefined;
-  const name = path.basename(file);
-  return fs.watch(path.dirname(file), (_event, changed) => {
-    if (changed !== null && changed !== name) return;
+  const fingerprint = () => {
+    try {
+      const st = fs.statSync(file);
+      return `${st.ino}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      return 'missing';
+    }
+  };
+  let last = fingerprint();
+  const changed = () => {
+    last = fingerprint();
     clearTimeout(timer);
     timer = setTimeout(reload, 150);
+  };
+  const name = path.basename(file);
+  const watcher = fs.watch(path.dirname(file), (_event, f) => {
+    if (f === null || f === name) changed();
   });
+  const poll = setInterval(() => {
+    if (fingerprint() !== last) changed();
+  }, pollMs);
+  poll.unref();
+  return {
+    close() {
+      watcher.close();
+      clearInterval(poll);
+      clearTimeout(timer);
+    },
+  };
 }

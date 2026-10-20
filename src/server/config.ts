@@ -35,3 +35,7 @@ export const HUB_ORIGINS = [
   `http://localhost:${PORT}`,
   ...(process.env.PROJECT_HUB_DEV_ORIGIN ? [process.env.PROJECT_HUB_DEV_ORIGIN] : []),
 ];
+
+// Phase 4: per-project notes and Monetize drafts, and the Ideas list.
+export const PROJECT_DOCS_DIR = path.join(HUB_DIR, 'projects');
+export const IDEAS_FILE = path.join(HUB_DIR, 'ideas.md');

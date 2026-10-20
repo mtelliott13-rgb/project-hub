@@ -10,19 +10,24 @@ import {
   HOST,
   HUB_DIR,
   HUB_ORIGINS,
+  IDEAS_FILE,
   LAUNCH_DIR,
   MIGRATIONS_DIR,
   PORT,
+  PROJECT_DOCS_DIR,
   PROJECTS_FILE,
   TOKEN_FILE,
   UI_TOKEN_FILE,
   WEB_DIST_DIR,
 } from './config.ts';
 import { listAllProjects, openDb } from './db/index.ts';
+import { generateCommand } from './doc-routes.ts';
+import { projectDocs } from './docs.ts';
 import { ChangeFeed } from './events.ts';
+import { monetizeJobs, runMonetize } from './monetize.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
-import { createProjectStore, watchProjectsFile } from './project-store.ts';
-import { reconcileRunning, syncFromSdk } from './sessions.ts';
+import { createProjectStore, watchFile } from './project-store.ts';
+import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
 import { ensureToken } from './token.ts';
 
 const TITLE_REFRESH_MS = 5 * 60_000;
@@ -54,7 +59,24 @@ const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'proje
   feed.notify();
 });
 store.reload();
-watchProjectsFile(PROJECTS_FILE, store.reload);
+watchFile(PROJECTS_FILE, store.reload);
+
+// Phase 4: notes, Monetize drafts and Ideas. Claude Code may tick ideas.md, so watch it too.
+const docs = projectDocs(PROJECT_DOCS_DIR);
+const generatePids = new Set<number>();
+watchFile(IDEAS_FILE, () => feed.notify());
+const jobs = monetizeJobs(
+  async (slug) => {
+    const p = listAllProjects(db).find((x) => x.slug === slug);
+    if (!p) throw new Error(`Unknown project ${slug}`);
+    return runMonetize(generateCommand(docs, p), generatePids);
+  },
+  (slug, result) => {
+    const id = docs.addDraft(slug, result.text, result.costUsd);
+    console.log(`${new Date().toISOString()} Monetize draft ${id} saved for ${slug} (cost $${result.costUsd ?? '?'})`);
+  },
+  () => feed.notify(),
+);
 
 async function refreshFromSdk() {
   if (syncFromSdk(db, await listAllSessions(), listAllProjects(db)) > 0) feed.notify();
@@ -67,7 +89,7 @@ async function refreshRunning() {
   if (agentsInFlight) return;
   agentsInFlight = true;
   try {
-    reconcileRunning(db, await runningAgents(), listAllProjects(db));
+    reconcileRunning(db, withoutPids(await runningAgents(), generatePids), listAllProjects(db));
     feed.notify();
   } finally {
     agentsInFlight = false;
@@ -99,6 +121,9 @@ const app = createApp({
   origins: HUB_ORIGINS,
   launcher,
   store,
+  docs,
+  ideasFile: IDEAS_FILE,
+  jobs,
   claudeDesktopInstalled: fs.existsSync(CLAUDE_DESKTOP_APP),
   onSessionActivity: refreshTitleSoon,
 });

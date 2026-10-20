@@ -15,7 +15,7 @@ import {
 } from '../src/server/hook-settings.ts';
 import { matchProject, worktreeParent } from '../src/server/matching.ts';
 import { reconcileRunning, syncFromSdk, titleFromInfo } from '../src/server/sessions.ts';
-import { HUB, testDeps } from './helpers.ts';
+import { HUB, PAGE_GET, testDeps } from './helpers.ts';
 
 describe('matchProject', () => {
   const projects = [
@@ -145,7 +145,7 @@ describe('sessions in the database', () => {
     await post(event('SessionEnd', { reason: 'prompt_input_exit' }));
     expect(row('s1')).toMatchObject({ state: 'ended', endReason: 'prompt_input_exit', model: 'claude-opus-5-5' });
 
-    const [project] = await (await app.request(`${HUB}/api/projects`)).json();
+    const [project] = await (await app.request(`${HUB}/api/projects`, { headers: PAGE_GET })).json();
     expect(project.sessions.map((s: { id: string }) => s.id)).toEqual(['s1']);
   });
 

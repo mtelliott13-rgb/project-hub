@@ -7,7 +7,7 @@ import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { listAllProjects, openDb } from '../src/server/db/index.ts';
 import { sessions } from '../src/server/db/schema.ts';
 import { browse, checkPaths } from '../src/server/folders.ts';
-import { watchProjectsFile } from '../src/server/project-store.ts';
+import { watchFile } from '../src/server/project-store.ts';
 import {
   addProject,
   collapseHome,
@@ -18,7 +18,7 @@ import {
   type ProjectInput,
 } from '../src/server/projects-file.ts';
 import { parseProjects } from '../src/server/projects.ts';
-import { HUB, testDeps } from './helpers.ts';
+import { HUB, PAGE_GET, testDeps } from './helpers.ts';
 
 const HOME = os.homedir();
 
@@ -289,18 +289,18 @@ describe('project store and API', () => {
     store.reload();
     expect(store.error()).toMatch(/kebab-case/);
     expect(slugs()).toEqual(['crypto-analysis', 'kratos-marketing', 'meme-radar']);
-    expect(await (await app.request(`${HUB}/api/projects-file`)).json()).toEqual({ error: expect.stringMatching(/kebab-case/) });
+    expect(await (await app.request(`${HUB}/api/projects-file`, { headers: PAGE_GET })).json()).toEqual({ error: expect.stringMatching(/kebab-case/) });
   });
 
   it('picks up a hand edit to projects.yaml without a restart', async () => {
     const { store, projectsFile, slugs } = setup();
-    const watcher = watchProjectsFile(projectsFile, store.reload);
+    const watcher = watchFile(projectsFile, store.reload);
     try {
       // Replace the file the way editors do: write elsewhere, then rename over it.
       const tmp = `${projectsFile}.tmp`;
       fs.writeFileSync(tmp, `${FILE}\n  - slug: by-hand\n    name: By Hand\n`);
       fs.renameSync(tmp, projectsFile);
-      await expect.poll(() => slugs(), { timeout: 3000 }).toContain('by-hand');
+      await expect.poll(() => slugs(), { timeout: 5000 }).toContain('by-hand');
     } finally {
       watcher.close();
     }

@@ -5,6 +5,7 @@ The full spec is in [SPEC.md](SPEC.md). Read it before changing anything. We bui
 Rules:
 - Use the stack in SPEC.md unless you hit a concrete problem with it; if so, say so before switching.
 - Don't start a later phase until asked.
+- **"What's next"** means the open items in `~/.project-hub/ideas.md` (the hub's Ideas page), top first. Read that file, propose the next item, and when one is built, mark it done there: change `[ ]` to `[x]` and add ` · done YYYY-MM-DD` at the end of its line. Items scoped to a project slug are for that project; `hub` items are for this repo.
 
 ## This machine
 
@@ -18,7 +19,7 @@ Rules:
 - `src/server/db/schema.ts` is the Drizzle schema. After changing it, run `pnpm db:generate` and commit the new file in `drizzle/`. Migrations apply on server start.
 - `web/` is the Vite + React + Tailwind UI, built to `dist/web` and served by the server.
 - `scripts/launch-agent.ts` is run-at-login (a launchd agent labelled `local.project-hub`).
-- Runtime data lives in `~/.project-hub/`: `projects.yaml`, `hub.db`, `logs/hub.log`, `backups/`.
+- Runtime data lives in `~/.project-hub/`: `projects.yaml`, `hub.db`, `ideas.md`, `projects/<slug>/` (notes and Monetize drafts), `logs/hub.log`, `backups/`.
 
 ## Commands
 
@@ -50,3 +51,11 @@ Rules:
 - `sessions: [id, …]` pins sessions to a project whatever their folder (for sessions run from `~` or another too-broad folder).
 - Folders and repos are picked from a list (`src/server/folders.ts`): suggestions plus browsing, limited to the home folder. A new repo must contain `.git`, and paths a project already lists may be missing on disk (Meme Radar keeps `~/Documents/meme-radar` for an old session).
 - Every `/api/*` write, and `/api/folders/*`, goes through `hubPageRefusal`, the same check `/api/launch` uses.
+
+## Project pages (Phase 4)
+
+- Routes: `/` (cards), `/p/<slug>` (project page), `/ideas`. The page is built from `SECTIONS` in `web/src/project/sections.tsx`; a new section is one component plus one line there. The Commits/PRs, Files/links and Chats sections are placeholders for Phases 5–7.
+- Notes: `~/.project-hub/projects/<slug>/notes.md`. Monetize drafts: `projects/<slug>/monetize/<timestamp>.md`, one per Generate, all kept, each editable (front matter records when it was generated, its cost, and when it was edited). Both autosave; the page never refetches text you're editing.
+- Generate runs only on click: `claude -p … --restricted --tools Read,Glob,Grep,WebSearch,WebFetch --permission-mode dontAsk --strict-mcp-config --no-session-persistence --output-format json` in the project's first existing repo or folder, with the others passed as `--add-dir` (`src/server/monetize.ts`). So it reads files and searches the web, can't edit or run commands, ignores user settings (no hooks fire), and saves no transcript. One run per project at a time; tests never run Claude.
+- Every `/api/*` call needs the page token, except `GET /api/health` and `/api/events`.
+- Deleting a project leaves its `projects/<slug>/` folder in place.
