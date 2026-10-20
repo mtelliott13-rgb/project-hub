@@ -10,7 +10,7 @@ Rules:
 
 - macOS (Apple Silicon), terminal app: **Terminal.app**, editor: **VS Code**. The Phase 2 launcher targets these.
 - No Homebrew. Node.js 22 lives in `~/.local/node` (on PATH via `~/.zshrc`); pnpm comes from corepack. Install nothing that needs an admin password.
-- `gh` is not installed yet; Phase 3 (`gh repo list`) and Phase 5 need it.
+- `gh` 2.102.0 lives in `~/.local/gh` (linked from `~/.local/bin/gh`), signed in as mtelliott13-rgb. That account has no repos yet, so no project has `github:` set.
 
 ## Layout
 
@@ -18,7 +18,7 @@ Rules:
 - `src/server/db/schema.ts` is the Drizzle schema. After changing it, run `pnpm db:generate` and commit the new file in `drizzle/`. Migrations apply on server start.
 - `web/` is the Vite + React + Tailwind UI, built to `dist/web` and served by the server.
 - `scripts/launch-agent.ts` is run-at-login (a launchd agent labelled `local.project-hub`).
-- Runtime data lives in `~/.project-hub/`: `projects.yaml`, `hub.db`, `logs/hub.log`.
+- Runtime data lives in `~/.project-hub/`: `projects.yaml`, `hub.db`, `logs/hub.log`, `backups/`.
 
 ## Commands
 
@@ -38,6 +38,15 @@ Rules:
 ## One-click launch (Phase 2)
 
 - `POST /api/launch` takes ids and slugs only (`src/server/launcher.ts`); the server looks up every path and builds every argument, and a request's `path` must be one the project already lists. `dryRun: true` returns the exact command without running it.
-- It accepts only the hub's own page: Origin must be the hub's (`HUB_ORIGINS`), `Sec-Fetch-Site` (when sent) `same-origin`, JSON body, and `X-Hub-Token` equal to `~/.project-hub/ui-token`, a token separate from the hook token. The server injects it into index.html (served `no-store`, unframeable). Every request must carry the hub's Host, which blocks DNS rebinding.
+- It accepts only the hub's own page (`hubPageRefusal` in `app.ts`): Origin must be the hub's (`HUB_ORIGINS`), `Sec-Fetch-Site` (when sent) `same-origin`, JSON body, and `X-Hub-Token` equal to `~/.project-hub/ui-token`, a token separate from the hook token. The server injects it into index.html (served `no-store`, unframeable). Every request must carry the hub's Host, which blocks DNS rebinding.
 - Terminal launches write a one-shot `.command` file in `~/.project-hub/launch/` and `open -a Terminal` it, so no Automation permission is needed. VS Code opens with `open -a 'Visual Studio Code'` (no `code` CLI here). Chats and Claude Projects open in the Claude desktop app (`claude://`), as the user chose; https is only the fallback when Claude.app is missing.
 - `pnpm dev` sets `PROJECT_HUB_DEV_ORIGIN` so the server also accepts Vite's page on 127.0.0.1:5173.
+
+## Projects (Phase 3)
+
+- `projects.yaml` is the source of truth. The page's Add, Edit, Archive, Unarchive and Delete write it (`src/server/projects-file.ts`, which edits only the named entry and keeps comments and layout, then parses the result back and refuses to save if it doesn't read back as intended), then reload from it. The previous version goes to `~/.project-hub/backups/projects.last.yaml`.
+- The hub watches the file, so hand edits show up without a restart. A broken file leaves the last good state in place, and the page shows the error.
+- `archived: true` hides a card; archived projects still file their sessions. A project removed from the file by hand is archived in the database, keeping its history. Delete from the page removes the YAML entry and the database row, so its sessions become unfiled. It never touches files on disk.
+- `sessions: [id, …]` pins sessions to a project whatever their folder (for sessions run from `~` or another too-broad folder).
+- Folders and repos are picked from a list (`src/server/folders.ts`): suggestions plus browsing, limited to the home folder. A new repo must contain `.git`, and paths a project already lists may be missing on disk (Meme Radar keeps `~/Documents/meme-radar` for an old session).
+- Every `/api/*` write, and `/api/folders/*`, goes through `hubPageRefusal`, the same check `/api/launch` uses.

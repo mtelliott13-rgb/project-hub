@@ -107,7 +107,7 @@ describe('sessions in the database', () => {
     dirs.push(dir);
     const db = openDb(path.join(dir, 'hub.db'), MIGRATIONS_DIR);
     syncProjects(db, [
-      { slug: 'app', name: 'App', repos: ['/u/app'], folders: [], github: [], keywords: [], sessions: [] },
+      { slug: 'app', name: 'App', repos: ['/u/app'], folders: [], github: [], keywords: [], sessions: [], archived: false },
     ]);
     const app = createApp(testDeps(db).deps);
     const post = (body: unknown, token = 't0ken') =>

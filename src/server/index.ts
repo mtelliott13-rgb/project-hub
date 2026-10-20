@@ -1,8 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.ts';
 import { listAllSessions, runningAgents, sessionInfo } from './claude-code.ts';
 import {
+  BACKUP_DIR,
   CLAUDE_DESKTOP_APP,
   DB_FILE,
   HOST,
@@ -16,11 +18,11 @@ import {
   UI_TOKEN_FILE,
   WEB_DIST_DIR,
 } from './config.ts';
-import { listActiveProjects, openDb, syncProjects } from './db/index.ts';
+import { listAllProjects, openDb } from './db/index.ts';
 import { ChangeFeed } from './events.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
-import { loadProjects } from './projects.ts';
-import { reconcileRunning, rematchSessions, syncFromSdk } from './sessions.ts';
+import { createProjectStore, watchProjectsFile } from './project-store.ts';
+import { reconcileRunning, syncFromSdk } from './sessions.ts';
 import { ensureToken } from './token.ts';
 
 const TITLE_REFRESH_MS = 5 * 60_000;
@@ -29,10 +31,6 @@ const AGENTS_POLL_MS = 15_000;
 fs.mkdirSync(HUB_DIR, { recursive: true });
 
 const db = openDb(DB_FILE, MIGRATIONS_DIR);
-const configs = loadProjects(PROJECTS_FILE);
-if (configs.length === 0) console.warn(`No projects found in ${PROJECTS_FILE}`);
-syncProjects(db, configs);
-rematchSessions(db, listActiveProjects(db));
 
 const token = ensureToken(TOKEN_FILE);
 const uiToken = ensureToken(UI_TOKEN_FILE);
@@ -47,8 +45,19 @@ const feed = new ChangeFeed();
 const logError = (what: string) => (err: unknown) =>
   console.error(`${new Date().toISOString()} ${what} failed:`, err instanceof Error ? err.message : err);
 
+// projects.yaml is read now and again whenever it changes, by hand or from the page.
+let lastFileError: string | null = null;
+const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'projects.last.yaml'), () => {
+  const error = store.error();
+  if (error && error !== lastFileError) logError('Reading projects.yaml')(error);
+  lastFileError = error;
+  feed.notify();
+});
+store.reload();
+watchProjectsFile(PROJECTS_FILE, store.reload);
+
 async function refreshFromSdk() {
-  if (syncFromSdk(db, await listAllSessions(), listActiveProjects(db)) > 0) feed.notify();
+  if (syncFromSdk(db, await listAllSessions(), listAllProjects(db)) > 0) feed.notify();
 }
 
 // `claude agents --json` occasionally hangs when run from the hub (see CLAUDE.md),
@@ -58,7 +67,7 @@ async function refreshRunning() {
   if (agentsInFlight) return;
   agentsInFlight = true;
   try {
-    reconcileRunning(db, await runningAgents(), listActiveProjects(db));
+    reconcileRunning(db, await runningAgents(), listAllProjects(db));
     feed.notify();
   } finally {
     agentsInFlight = false;
@@ -75,7 +84,7 @@ function refreshTitleSoon(sessionId: string, cwd: string) {
     setTimeout(() => {
       pendingTitles.delete(sessionId);
       sessionInfo(sessionId, cwd)
-        .then((info) => info && syncFromSdk(db, [info], listActiveProjects(db)) > 0 && feed.notify())
+        .then((info) => info && syncFromSdk(db, [info], listAllProjects(db)) > 0 && feed.notify())
         .catch(logError('Title refresh'));
     }, 3_000),
   );
@@ -89,11 +98,12 @@ const app = createApp({
   uiToken,
   origins: HUB_ORIGINS,
   launcher,
+  store,
   claudeDesktopInstalled: fs.existsSync(CLAUDE_DESKTOP_APP),
   onSessionActivity: refreshTitleSoon,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
-  console.log(`Project Hub on http://${HOST}:${info.port} with ${configs.length} project(s)`);
+  console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
   refreshFromSdk().catch(logError('Session backfill'));
   refreshRunning().catch(logError('claude agents'));
   setInterval(() => refreshFromSdk().catch(logError('Title refresh')), TITLE_REFRESH_MS);

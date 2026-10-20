@@ -4,10 +4,13 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { eq } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { listActiveProjects, type Db } from './db/index.ts';
+import { listAllProjects, type Db } from './db/index.ts';
 import { projects, sessions } from './db/schema.ts';
 import type { ChangeFeed } from './events.ts';
+import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
+import type { ProjectStore } from './project-store.ts';
+import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
 import { applyHookEvent, hookPayloadSchema, sessionsForProjects } from './sessions.ts';
 import { tokenMatches } from './token.ts';
 
@@ -22,28 +25,36 @@ type AppDeps = {
   origins: string[];
   launcher: Launcher;
   claudeDesktopInstalled: boolean;
+  /** projects.yaml, as read and written by the hub page. */
+  store: ProjectStore;
   /** Called after a hook event is stored, e.g. to refresh that session's title. */
   onSessionActivity?: (sessionId: string, cwd: string) => void;
 };
 
 /**
- * Why a launch request did not come from the hub's own page, or null if it did.
- * Browsers always send Origin on a POST and can't forge it; a cross-site page also
- * can't read index.html to learn the token, and JSON forces a CORS preflight the
- * hub never answers.
+ * Why a request did not come from the hub's own page, or null if it did.
+ * Browsers always send Origin on POST, PUT and DELETE and can't forge it; a
+ * cross-site page also can't read index.html to learn the token, and JSON
+ * forces a CORS preflight the hub never answers. (Same-origin GETs carry no
+ * Origin, so for those the token and Sec-Fetch-Site do the work.)
  */
-export function launchRefusal(c: Context, origins: string[], uiToken: string): string | null {
+export function hubPageRefusal(c: Context, origins: string[], uiToken: string): string | null {
+  const method = c.req.method;
   const origin = c.req.header('Origin');
-  if (!origin || !origins.includes(origin)) return 'launch requests must come from the hub page (Origin)';
+  if (method === 'GET' ? origin !== undefined && !origins.includes(origin) : !origin || !origins.includes(origin)) {
+    return 'requests must come from the hub page (Origin)';
+  }
   const site = c.req.header('Sec-Fetch-Site');
-  if (site !== undefined && site !== 'same-origin') return 'launch requests must come from the hub page (Sec-Fetch-Site)';
-  if (!c.req.header('Content-Type')?.startsWith('application/json')) return 'launch requests must be JSON';
+  if (site !== undefined && site !== 'same-origin') return 'requests must come from the hub page (Sec-Fetch-Site)';
+  if ((method === 'POST' || method === 'PUT') && !c.req.header('Content-Type')?.startsWith('application/json')) {
+    return 'requests must be JSON';
+  }
   if (!tokenMatches(uiToken, c.req.header('X-Hub-Token'))) return 'bad or missing token';
   return null;
 }
 
 export function createApp(deps: AppDeps) {
-  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, onSessionActivity } = deps;
+  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, onSessionActivity } = deps;
   const app = new Hono();
 
   // Only answer requests addressed to the hub itself. This stops DNS rebinding:
@@ -54,12 +65,63 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
+  // Everything that changes something, or lists folders, must come from the
+  // hub page with its token. Plain reads of hub state (projects, events) don't.
+  app.use('/api/*', async (c, next) => {
+    const guarded = c.req.method !== 'GET' || c.req.path.startsWith('/api/folders');
+    if (guarded) {
+      const refusal = hubPageRefusal(c, origins, uiToken);
+      if (refusal) return c.json({ error: refusal }, 403);
+    }
+    await next();
+  });
+
   app.get('/api/health', (c) => c.json({ ok: true }));
 
+  /** Every project, archived ones included (the page hides those), with its sessions. */
   app.get('/api/projects', (c) => {
-    const projects = listActiveProjects(db);
+    const projects = listAllProjects(db);
     const all = sessionsForProjects(db, projects.map((p) => p.slug));
     return c.json(projects.map((p) => ({ ...p, sessions: all.filter((s) => s.projectSlug === p.slug) })));
+  });
+
+  /** Whether projects.yaml currently parses. When it doesn't, the hub keeps the last good version. */
+  app.get('/api/projects-file', (c) => c.json({ error: store.error() }));
+
+  // Add, edit, archive and delete. Each one writes projects.yaml and reloads from it.
+  const projectWrite = async (c: Context, run: () => unknown) => {
+    try {
+      return c.json({ ok: true, result: (await run()) ?? null });
+    } catch (e) {
+      if (e instanceof ProjectsFileError || e instanceof FolderError) return c.json({ error: e.message }, 400);
+      throw e;
+    }
+  };
+  const readInput = async (c: Context, slug?: string) => {
+    const parsed = projectInputSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) throw new ProjectsFileError(parsed.error.issues.map((i) => i.message).join('; '));
+    const before = slug ? listAllProjects(db).find((p) => p.slug === slug) : undefined;
+    checkPaths(parsed.data.repos, 'repos', before?.repos ?? []);
+    checkPaths(parsed.data.folders, 'folders', before?.folders ?? []);
+    return parsed.data;
+  };
+  app.post('/api/projects', (c) => projectWrite(c, async () => store.add(await readInput(c))));
+  app.put('/api/projects/:slug', (c) =>
+    projectWrite(c, async () => store.update(c.req.param('slug'), await readInput(c, c.req.param('slug')))),
+  );
+  app.post('/api/projects/:slug/archive', (c) => projectWrite(c, () => store.setArchived(c.req.param('slug'), true)));
+  app.post('/api/projects/:slug/unarchive', (c) => projectWrite(c, () => store.setArchived(c.req.param('slug'), false)));
+  app.delete('/api/projects/:slug', (c) => projectWrite(c, () => ({ unfiledSessions: store.remove(c.req.param('slug')) })));
+
+  // The folder picker.
+  app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));
+  app.get('/api/folders/browse', (c) => {
+    try {
+      return c.json(browse(c.req.query('path') || undefined));
+    } catch (e) {
+      if (e instanceof FolderError) return c.json({ error: e.message }, 400);
+      throw e;
+    }
   });
 
   app.get('/api/events', (c) =>
@@ -80,7 +142,7 @@ export function createApp(deps: AppDeps) {
     if (!tokenMatches(token, c.req.header('X-Hub-Token'))) return c.json({ error: 'bad token' }, 401);
     const parsed = hookPayloadSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'bad payload' }, 400);
-    if (applyHookEvent(db, parsed.data, listActiveProjects(db))) {
+    if (applyHookEvent(db, parsed.data, listAllProjects(db))) {
       feed.notify();
       onSessionActivity?.(parsed.data.session_id, parsed.data.cwd);
     }
@@ -88,8 +150,6 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post('/api/launch', async (c) => {
-    const refusal = launchRefusal(c, origins, uiToken);
-    if (refusal) return c.json({ error: refusal }, 403);
     const parsed = launchRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'bad launch request' }, 400);
     const req = parsed.data;

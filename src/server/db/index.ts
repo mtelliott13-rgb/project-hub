@@ -19,7 +19,9 @@ export function openDb(file: string, migrationsFolder: string) {
 
 /**
  * Upserts every project from projects.yaml and archives the ones that are
- * no longer listed. Hub-owned fields (colour, pinned) are left alone.
+ * no longer listed, so a project removed by hand keeps its history. (Delete
+ * from the hub page removes the row as well.) Hub-owned fields (colour,
+ * pinned) are left alone.
  */
 export function syncProjects(db: Db, configs: ProjectConfig[], now = new Date()) {
   db.transaction((tx) => {
@@ -32,7 +34,7 @@ export function syncProjects(db: Db, configs: ProjectConfig[], now = new Date())
         claudeProject: c.claude_project ?? null,
         keywords: c.keywords,
         pinnedSessions: c.sessions,
-        archived: false,
+        archived: c.archived,
         updatedAt: now,
       };
       tx.insert(projects)
@@ -45,6 +47,11 @@ export function syncProjects(db: Db, configs: ProjectConfig[], now = new Date())
       .where(notInArray(projects.slug, configs.map((c) => c.slug)))
       .run();
   });
+}
+
+/** Every project the hub knows, archived ones included. Sessions match against these. */
+export function listAllProjects(db: Db): Project[] {
+  return db.select().from(projects).orderBy(asc(projects.name)).all();
 }
 
 export function listActiveProjects(db: Db): Project[] {

@@ -22,6 +22,8 @@ const projectSchema = z.object({
   // Session ids filed here whatever their folder, for sessions run from a folder
   // too broad for a rule (like ~).
   sessions: z.array(z.string().min(1)).default([]),
+  // Hidden from the home page; its sessions and history are kept.
+  archived: z.boolean().default(false),
 });
 
 const fileSchema = z.object({

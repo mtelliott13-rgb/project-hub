@@ -122,7 +122,7 @@ describe('POST /api/launch', () => {
     const repo = path.join(dir, 'acme');
     fs.mkdirSync(repo);
     const db = openDb(path.join(dir, 'hub.db'), MIGRATIONS_DIR);
-    syncProjects(db, [{ slug: 'acme', name: 'Acme', repos: [repo], folders: [], github: [], keywords: [], sessions: [] }]);
+    syncProjects(db, [{ slug: 'acme', name: 'Acme', repos: [repo], folders: [], github: [], keywords: [], sessions: [], archived: false }]);
     db.insert(sessions).values({ id: SID, projectSlug: 'acme', cwd: repo, state: 'ended', lastActiveAt: new Date() }).run();
     const webDir = path.join(dir, 'web');
     fs.mkdirSync(webDir);
