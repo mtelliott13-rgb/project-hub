@@ -11,6 +11,6 @@ export const sessionInfo = (id: string, dir: string) => getSessionInfo(id, { dir
 
 /** Sessions Claude Code reports as running. Throws if the CLI fails. */
 export async function runningAgents(): Promise<RunningAgent[]> {
-  const { stdout } = await execa('claude', ['agents', '--json'], { timeout: 15_000 });
+  const { stdout } = await execa('claude', ['agents', '--json'], { timeout: 15_000, stdin: 'ignore' });
   return z.array(agentSchema).parse(JSON.parse(stdout));
 }
