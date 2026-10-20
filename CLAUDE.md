@@ -33,10 +33,11 @@ Rules:
 - Never store prompt text. Hook payloads go through a zod schema that drops unknown keys, and an SDK `summary` that is really the first prompt is treated as no title.
 - `model` stays empty for now: this Claude Code version's SessionStart payload has no `model` field, and the transcript format is internal, so we don't read it.
 - "Running" comes from SessionStart/Stop hooks plus `claude agents --json` every 15 s. A session that was listed and then disappears is marked ended.
+- Known issue: under the hub, `claude agents --json` sometimes spins on CPU until the 15 s timeout, though it answers in ~0.2 s from a shell or a test launchd job. A failed poll changes nothing (hooks still update state), and polls never overlap.
 
 ## One-click launch (Phase 2)
 
 - `POST /api/launch` takes ids and slugs only (`src/server/launcher.ts`); the server looks up every path and builds every argument, and a request's `path` must be one the project already lists. `dryRun: true` returns the exact command without running it.
 - It accepts only the hub's own page: Origin must be the hub's (`HUB_ORIGINS`), `Sec-Fetch-Site` (when sent) `same-origin`, JSON body, and `X-Hub-Token` equal to `~/.project-hub/ui-token`, a token separate from the hook token. The server injects it into index.html (served `no-store`, unframeable). Every request must carry the hub's Host, which blocks DNS rebinding.
-- Terminal launches write a one-shot `.command` file in `~/.project-hub/launch/` and `open -a Terminal` it, so no Automation permission is needed. VS Code opens with `open -a 'Visual Studio Code'` (no `code` CLI here). Chats and Claude Projects use `claude://` when Claude.app is installed, else https.
+- Terminal launches write a one-shot `.command` file in `~/.project-hub/launch/` and `open -a Terminal` it, so no Automation permission is needed. VS Code opens with `open -a 'Visual Studio Code'` (no `code` CLI here). Chats and Claude Projects open in the Claude desktop app (`claude://`), as the user chose; https is only the fallback when Claude.app is missing.
 - `pnpm dev` sets `PROJECT_HUB_DEV_ORIGIN` so the server also accepts Vite's page on 127.0.0.1:5173.

@@ -102,7 +102,7 @@ export function createApp(deps: AppDeps) {
       });
       const command = describePlan(plan);
       if (req.dryRun) return c.json({ ok: true, dryRun: true, command });
-      console.log(`Launch ${req.kind}: ${command}`);
+      console.log(`${new Date().toISOString()} Launch ${req.kind}: ${command}`);
       await launcher(plan);
       return c.json({ ok: true, command });
     } catch (e) {

@@ -45,15 +45,24 @@ const launcher: Launcher =
 const feed = new ChangeFeed();
 
 const logError = (what: string) => (err: unknown) =>
-  console.error(`${what} failed:`, err instanceof Error ? err.message : err);
+  console.error(`${new Date().toISOString()} ${what} failed:`, err instanceof Error ? err.message : err);
 
 async function refreshFromSdk() {
   if (syncFromSdk(db, await listAllSessions(), listActiveProjects(db)) > 0) feed.notify();
 }
 
+// `claude agents --json` occasionally hangs when run from the hub (see CLAUDE.md),
+// so never start a second one while the last is still out.
+let agentsInFlight = false;
 async function refreshRunning() {
-  reconcileRunning(db, await runningAgents(), listActiveProjects(db));
-  feed.notify();
+  if (agentsInFlight) return;
+  agentsInFlight = true;
+  try {
+    reconcileRunning(db, await runningAgents(), listActiveProjects(db));
+    feed.notify();
+  } finally {
+    agentsInFlight = false;
+  }
 }
 
 // A session's title appears after its first turn, so look it up shortly after
