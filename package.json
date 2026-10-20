@@ -7,7 +7,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,web \"node --watch src/server/index.ts\" \"vite\"",
+    "dev": "concurrently -k -n server,web \"PROJECT_HUB_DEV_ORIGIN=http://127.0.0.1:5173 node --watch src/server/index.ts\" \"vite\"",
     "build": "vite build",
     "start": "node src/server/index.ts",
     "typecheck": "tsc --noEmit",

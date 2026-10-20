@@ -19,3 +19,19 @@ export const PORT = Number(process.env.PROJECT_HUB_PORT ?? 4747);
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const MIGRATIONS_DIR = path.join(REPO_ROOT, 'drizzle');
 export const WEB_DIST_DIR = path.join(REPO_ROOT, 'dist/web');
+
+// Phase 2 launcher targets (macOS). See CLAUDE.md, "This machine".
+export const TERMINAL_APP = 'Terminal';
+export const EDITOR_APP = 'Visual Studio Code';
+export const CLAUDE_DESKTOP_APP = '/Applications/Claude.app';
+// The page's token for /api/launch, separate from the hook token.
+export const UI_TOKEN_FILE = path.join(HUB_DIR, 'ui-token');
+// One-shot .command files for terminal launches; each deletes itself when it runs.
+export const LAUNCH_DIR = path.join(HUB_DIR, 'launch');
+
+/** Origins the hub's own page is served from. `pnpm dev` adds Vite's via PROJECT_HUB_DEV_ORIGIN. */
+export const HUB_ORIGINS = [
+  `http://${HOST}:${PORT}`,
+  `http://localhost:${PORT}`,
+  ...(process.env.PROJECT_HUB_DEV_ORIGIN ? [process.env.PROJECT_HUB_DEV_ORIGIN] : []),
+];

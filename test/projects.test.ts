@@ -4,9 +4,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/server/app.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
-import { ChangeFeed } from '../src/server/events.ts';
 import { listActiveProjects, openDb, syncProjects } from '../src/server/db/index.ts';
 import { parseProjects } from '../src/server/projects.ts';
+import { HUB, testDeps } from './helpers.ts';
 
 const SPEC_EXAMPLE = `
 projects:
@@ -69,8 +69,8 @@ describe('database sync and API', () => {
   it('serves one entry per project from /api/projects', async () => {
     const db = freshDb();
     syncProjects(db, parseProjects(SPEC_EXAMPLE));
-    const app = createApp({ db, webDir: '/nonexistent', token: 't', feed: new ChangeFeed() });
-    const res = await app.request('/api/projects');
+    const app = createApp(testDeps(db).deps);
+    const res = await app.request(`${HUB}/api/projects`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(1);

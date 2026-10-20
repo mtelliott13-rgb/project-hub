@@ -7,7 +7,6 @@ import { createApp } from '../src/server/app.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { listActiveProjects, openDb, syncProjects } from '../src/server/db/index.ts';
 import { sessions } from '../src/server/db/schema.ts';
-import { ChangeFeed } from '../src/server/events.ts';
 import {
   formatSettings,
   HUB_HOOK_COMMAND,
@@ -16,6 +15,7 @@ import {
 } from '../src/server/hook-settings.ts';
 import { matchProject, worktreeParent } from '../src/server/matching.ts';
 import { reconcileRunning, syncFromSdk, titleFromInfo } from '../src/server/sessions.ts';
+import { HUB, testDeps } from './helpers.ts';
 
 describe('matchProject', () => {
   const projects = [
@@ -101,10 +101,9 @@ describe('sessions in the database', () => {
     syncProjects(db, [
       { slug: 'app', name: 'App', repos: ['/u/app'], folders: [], github: [], keywords: [] },
     ]);
-    const feed = new ChangeFeed();
-    const app = createApp({ db, webDir: '/nonexistent', token: 't0ken', feed });
+    const app = createApp(testDeps(db).deps);
     const post = (body: unknown, token = 't0ken') =>
-      app.request('/hooks/claude', {
+      app.request(`${HUB}/hooks/claude`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Hub-Token': token },
         body: JSON.stringify(body),
@@ -138,7 +137,7 @@ describe('sessions in the database', () => {
     await post(event('SessionEnd', { reason: 'prompt_input_exit' }));
     expect(row('s1')).toMatchObject({ state: 'ended', endReason: 'prompt_input_exit', model: 'claude-opus-5-5' });
 
-    const [project] = await (await app.request('/api/projects')).json();
+    const [project] = await (await app.request(`${HUB}/api/projects`)).json();
     expect(project.sessions.map((s: { id: string }) => s.id)).toEqual(['s1']);
   });
 

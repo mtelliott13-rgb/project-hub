@@ -3,17 +3,22 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.ts';
 import { listAllSessions, runningAgents, sessionInfo } from './claude-code.ts';
 import {
+  CLAUDE_DESKTOP_APP,
   DB_FILE,
   HOST,
   HUB_DIR,
+  HUB_ORIGINS,
+  LAUNCH_DIR,
   MIGRATIONS_DIR,
   PORT,
   PROJECTS_FILE,
   TOKEN_FILE,
+  UI_TOKEN_FILE,
   WEB_DIST_DIR,
 } from './config.ts';
 import { listActiveProjects, openDb, syncProjects } from './db/index.ts';
 import { ChangeFeed } from './events.ts';
+import { macLauncher, type Launcher } from './launcher.ts';
 import { loadProjects } from './projects.ts';
 import { reconcileRunning, rematchSessions, syncFromSdk } from './sessions.ts';
 import { ensureToken } from './token.ts';
@@ -30,6 +35,13 @@ syncProjects(db, configs);
 rematchSessions(db, listActiveProjects(db));
 
 const token = ensureToken(TOKEN_FILE);
+const uiToken = ensureToken(UI_TOKEN_FILE);
+const launcher: Launcher =
+  process.platform === 'darwin'
+    ? macLauncher(LAUNCH_DIR)
+    : async () => {
+        throw new Error(`Launching is only implemented for macOS so far, not ${process.platform}.`);
+      };
 const feed = new ChangeFeed();
 
 const logError = (what: string) => (err: unknown) =>
@@ -60,7 +72,17 @@ function refreshTitleSoon(sessionId: string, cwd: string) {
   );
 }
 
-const app = createApp({ db, webDir: WEB_DIST_DIR, token, feed, onSessionActivity: refreshTitleSoon });
+const app = createApp({
+  db,
+  webDir: WEB_DIST_DIR,
+  token,
+  feed,
+  uiToken,
+  origins: HUB_ORIGINS,
+  launcher,
+  claudeDesktopInstalled: fs.existsSync(CLAUDE_DESKTOP_APP),
+  onSessionActivity: refreshTitleSoon,
+});
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${configs.length} project(s)`);
   refreshFromSdk().catch(logError('Session backfill'));
