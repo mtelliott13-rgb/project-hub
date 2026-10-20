@@ -29,6 +29,7 @@ const project = (over: Partial<Project> = {}): Project => ({
   github: [],
   claudeProject: `https://claude.ai/project/${PROJ}`,
   keywords: [],
+  pinnedSessions: [],
   colour: null,
   pinned: false,
   archived: false,
@@ -121,7 +122,7 @@ describe('POST /api/launch', () => {
     const repo = path.join(dir, 'acme');
     fs.mkdirSync(repo);
     const db = openDb(path.join(dir, 'hub.db'), MIGRATIONS_DIR);
-    syncProjects(db, [{ slug: 'acme', name: 'Acme', repos: [repo], folders: [], github: [], keywords: [] }]);
+    syncProjects(db, [{ slug: 'acme', name: 'Acme', repos: [repo], folders: [], github: [], keywords: [], sessions: [] }]);
     db.insert(sessions).values({ id: SID, projectSlug: 'acme', cwd: repo, state: 'ended', lastActiveAt: new Date() }).run();
     const webDir = path.join(dir, 'web');
     fs.mkdirSync(webDir);

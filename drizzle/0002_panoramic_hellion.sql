@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `pinned_sessions` text DEFAULT '[]' NOT NULL;

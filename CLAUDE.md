@@ -10,7 +10,7 @@ Rules:
 
 - macOS (Apple Silicon), terminal app: **Terminal.app**, editor: **VS Code**. The Phase 2 launcher targets these.
 - No Homebrew. Node.js 22 lives in `~/.local/node` (on PATH via `~/.zshrc`); pnpm comes from corepack. Install nothing that needs an admin password.
-- `gh` is not installed yet; Phase 3 needs it.
+- `gh` is not installed yet; Phase 3 (`gh repo list`) and Phase 5 need it.
 
 ## Layout
 

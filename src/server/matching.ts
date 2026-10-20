@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-type Matchable = { slug: string; repos: string[]; folders: string[] };
+type Matchable = { slug: string; repos: string[]; folders: string[]; pinnedSessions?: string[] };
 
 /** A worktree under <repo>/.claude/worktrees/<name> belongs to <repo>. */
 export function worktreeParent(cwd: string): string {
@@ -12,10 +12,15 @@ export function worktreeParent(cwd: string): string {
 const isInside = (child: string, parent: string) => child === parent || child.startsWith(parent + path.sep);
 
 /**
- * Finds the project whose repo or folder is the longest path prefix of cwd,
- * so a nested project wins over the folder that contains it.
+ * Finds the project that pins this session id, else the one whose repo or folder
+ * is the longest path prefix of cwd, so a nested project wins over the folder
+ * that contains it.
  */
-export function matchProject(cwd: string, projects: Matchable[]): string | null {
+export function matchProject(cwd: string, projects: Matchable[], sessionId?: string): string | null {
+  if (sessionId) {
+    const pinned = projects.find((p) => p.pinnedSessions?.includes(sessionId));
+    if (pinned) return pinned.slug;
+  }
   const dir = path.resolve(worktreeParent(cwd));
   let best: { slug: string; length: number } | null = null;
   for (const p of projects) {

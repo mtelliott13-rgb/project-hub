@@ -31,6 +31,7 @@ export function syncProjects(db: Db, configs: ProjectConfig[], now = new Date())
         github: c.github,
         claudeProject: c.claude_project ?? null,
         keywords: c.keywords,
+        pinnedSessions: c.sessions,
         archived: false,
         updatedAt: now,
       };

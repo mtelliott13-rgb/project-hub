@@ -19,6 +19,9 @@ const projectSchema = z.object({
     .default([]),
   claude_project: z.url().optional(),
   keywords: z.array(z.string().min(1)).default([]),
+  // Session ids filed here whatever their folder, for sessions run from a folder
+  // too broad for a rule (like ~).
+  sessions: z.array(z.string().min(1)).default([]),
 });
 
 const fileSchema = z.object({

@@ -30,7 +30,7 @@ describe('parseProjects', () => {
 
   it('defaults the optional lists', () => {
     const [p] = parseProjects('projects:\n  - slug: solo\n    name: Solo\n');
-    expect(p).toMatchObject({ repos: [], folders: [], github: [], keywords: [] });
+    expect(p).toMatchObject({ repos: [], folders: [], github: [], keywords: [], sessions: [] });
     expect(p.claude_project).toBeUndefined();
   });
 

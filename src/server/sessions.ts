@@ -25,7 +25,7 @@ export type HookPayload = z.infer<typeof hookPayloadSchema>;
 /** Records one hook event. Returns false for events the hub ignores. */
 export function applyHookEvent(db: Db, e: HookPayload, projects: Project[], now = new Date()): boolean {
   const base = {
-    projectSlug: matchProject(e.cwd, projects),
+    projectSlug: matchProject(e.cwd, projects, e.session_id),
     cwd: e.cwd,
     lastActiveAt: now,
     ...(e.transcript_path && { transcriptPath: e.transcript_path }),
@@ -80,7 +80,7 @@ export function syncFromSdk(db: Db, infos: SDKSessionInfo[], projects: Project[]
         .insert(sessions)
         .values({
           id: info.sessionId,
-          projectSlug: matchProject(info.cwd, projects),
+          projectSlug: matchProject(info.cwd, projects, info.sessionId),
           cwd: info.cwd,
           ...fresh,
           state: 'ended',
@@ -116,7 +116,7 @@ export function reconcileRunning(db: Db, agents: RunningAgent[], projects: Proje
       tx.insert(sessions)
         .values({
           id: a.sessionId,
-          projectSlug: matchProject(a.cwd, projects),
+          projectSlug: matchProject(a.cwd, projects, a.sessionId),
           cwd: a.cwd,
           startedAt: a.startedAt ? new Date(a.startedAt) : now,
           lastActiveAt: now,
@@ -143,7 +143,7 @@ export function rematchSessions(db: Db, projects: Project[]) {
   const rows = db.select({ id: sessions.id, cwd: sessions.cwd, slug: sessions.projectSlug }).from(sessions).all();
   db.transaction((tx) => {
     for (const r of rows) {
-      const slug = matchProject(r.cwd, projects);
+      const slug = matchProject(r.cwd, projects, r.id);
       if (slug !== r.slug) tx.update(sessions).set({ projectSlug: slug }).where(eq(sessions.id, r.id)).run();
     }
   });

@@ -24,6 +24,14 @@ describe('matchProject', () => {
     { slug: 'docs', repos: [], folders: ['/u/Documents/App'] },
   ];
 
+  it('files a pinned session by id, whatever its folder', () => {
+    const withPin = [...projects, { slug: 'pinned', repos: [], folders: [], pinnedSessions: ['s-home'] }];
+    expect(matchProject('/u', withPin, 's-home')).toBe('pinned');
+    expect(matchProject('/u/code/app', withPin, 's-home')).toBe('pinned');
+    expect(matchProject('/u', withPin, 'other')).toBeNull();
+    expect(matchProject('/u/code/app', withPin)).toBe('inner');
+  });
+
   it('picks the longest path prefix', () => {
     expect(matchProject('/u/code/app/src', projects)).toBe('inner');
     expect(matchProject('/u/code/other', projects)).toBe('outer');
@@ -99,7 +107,7 @@ describe('sessions in the database', () => {
     dirs.push(dir);
     const db = openDb(path.join(dir, 'hub.db'), MIGRATIONS_DIR);
     syncProjects(db, [
-      { slug: 'app', name: 'App', repos: ['/u/app'], folders: [], github: [], keywords: [] },
+      { slug: 'app', name: 'App', repos: ['/u/app'], folders: [], github: [], keywords: [], sessions: [] },
     ]);
     const app = createApp(testDeps(db).deps);
     const post = (body: unknown, token = 't0ken') =>

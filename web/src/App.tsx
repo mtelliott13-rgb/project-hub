@@ -83,7 +83,7 @@ type Run = (body: LaunchBody) => Promise<void>;
 
 /**
  * Resume reopens whatever was touched last. Sessions are the only thing the hub
- * knows about until Phase 5 adds chats; then the newer of the two wins.
+ * knows about until Phase 7 adds chats; then the newer of the two wins.
  */
 function resume(p: ProjectDto, run: Run) {
   const latest = p.sessions[0];

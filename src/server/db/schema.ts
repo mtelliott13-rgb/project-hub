@@ -10,6 +10,8 @@ export const projects = sqliteTable('projects', {
   github: text('github', { mode: 'json' }).$type<string[]>().notNull(),
   claudeProject: text('claude_project'),
   keywords: text('keywords', { mode: 'json' }).$type<string[]>().notNull(),
+  // `sessions:` in projects.yaml: session ids pinned to this project.
+  pinnedSessions: text('pinned_sessions', { mode: 'json' }).$type<string[]>().notNull().default([]),
   colour: text('colour'),
   pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
   // Set when a project disappears from projects.yaml, so its history is kept.
@@ -26,7 +28,7 @@ export const sessions = sqliteTable(
   'sessions',
   {
     id: text('id').primaryKey(),
-    // Null means no project matched the folder; Phase 4 files these from the Inbox.
+    // Null means no project matched the folder; Phase 6 files these from the Inbox.
     projectSlug: text('project_slug').references(() => projects.slug),
     cwd: text('cwd').notNull(),
     transcriptPath: text('transcript_path'),
