@@ -12,7 +12,7 @@ import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
 import type { ProjectStore } from './project-store.ts';
 import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
-import { applyHookEvent, hookPayloadSchema, sessionsForProjects } from './sessions.ts';
+import { applyHookEvent, hookPayloadSchema, resumeProblem, sessionsForProjects } from './sessions.ts';
 import { tokenMatches } from './token.ts';
 
 type AppDeps = DocDeps & {
@@ -83,7 +83,9 @@ export function createApp(deps: AppDeps) {
   /** Every project, archived ones included (the page hides those), with its sessions. */
   app.get('/api/projects', (c) => {
     const projects = listAllProjects(db);
-    const all = sessionsForProjects(db, projects.map((p) => p.slug));
+    const exists = (dir: string) => fs.existsSync(dir);
+    // `resumeProblem` says why a session can't be reopened; null means it can.
+    const all = sessionsForProjects(db, projects.map((p) => p.slug)).map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }));
     return c.json(projects.map((p) => ({ ...p, sessions: all.filter((s) => s.projectSlug === p.slug) })));
   });
 

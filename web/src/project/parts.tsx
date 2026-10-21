@@ -4,17 +4,20 @@ import { useState } from 'react';
 import { archiveProject, type ProjectDto, type SessionDto } from '../api.ts';
 import type { LaunchBody } from '../launch.ts';
 import { ConfirmDelete, ProjectForm } from '../ProjectForm.tsx';
+import { latestReopenable, listed } from '../resume.ts';
 import { navigate } from '../router.tsx';
 import { Action, ago, Badge, TextButton } from '../ui.tsx';
 
 export type Run = (body: LaunchBody) => Promise<void>;
 
+
 /**
- * Resume reopens whatever was touched last. Sessions are the only thing the hub
- * knows about until Phase 7 adds chats; then the newer of the two wins.
+ * Resume reopens whatever was touched last that can be reopened. Sessions are
+ * the only thing the hub knows about until Phase 7 adds chats; then the newer
+ * of the two wins.
  */
 function resume(p: ProjectDto, run: Run) {
-  const latest = p.sessions[0];
+  const latest = latestReopenable(p.sessions);
   if (!latest) return;
   if (latest.state === 'running' && !confirm('That session is still running. Open a second copy of it anyway?')) return;
   void run({ kind: 'session', sessionId: latest.id });
@@ -30,10 +33,16 @@ export function StatusBadge({ project: p }: { project: ProjectDto }) {
 
 /** Resume, New session here, Open in VS Code, New chat in project. */
 export function ProjectActions({ project: p, run }: { project: ProjectDto; run: Run }) {
-  const latest = p.sessions[0];
+  const latest = latestReopenable(p.sessions);
+  const why = p.sessions.length ? 'None of its sessions can be reopened' : 'No sessions yet';
   return (
     <div className="flex flex-wrap gap-2">
-      <Action primary disabled={!latest} title={latest ? 'Reopen the latest session in Terminal' : 'No sessions yet'} onClick={() => resume(p, run)}>
+      <Action
+        primary
+        disabled={!latest}
+        title={latest ? `Reopen "${latest.title ?? 'Untitled session'}" in Terminal` : why}
+        onClick={() => resume(p, run)}
+      >
         Resume
       </Action>
       {p.repos.length > 0 && (
@@ -102,13 +111,21 @@ export function ProjectMenu({ project: p, onDeleted }: { project: ProjectDto; on
   );
 }
 
-/** Sessions, newest first, each with Terminal and Desktop buttons. `preview` shows that many until expanded. */
-export function SessionList({ sessions, run, preview }: { sessions: SessionDto[]; run: Run; preview?: number }) {
+/**
+ * Sessions, newest first. Those that can be reopened (and any running now) are
+ * listed with Terminal and Desktop buttons; the rest fold into one line that
+ * says why. `preview` shows that many until expanded.
+ */
+export function SessionList({ sessions: all, run, preview }: { sessions: SessionDto[]; run: Run; preview?: number }) {
   const [showAll, setShowAll] = useState(false);
+  const [showGone, setShowGone] = useState(false);
+  const sessions = listed(all);
+  const gone = all.filter((s) => !sessions.includes(s));
   const shown = preview && !showAll ? sessions.slice(0, preview) : sessions;
-  if (sessions.length === 0) return <p className="mt-1 text-sm text-stone-500">None yet</p>;
+  if (all.length === 0) return <p className="mt-1 text-sm text-stone-500">None yet</p>;
   return (
     <>
+      {sessions.length === 0 && <p className="mt-1 text-sm text-stone-500">None that can be reopened.</p>}
       <ul className="mt-1 divide-y divide-stone-100 text-sm dark:divide-stone-800">
         {shown.map((s) => (
           <li key={s.id} data-testid="session-row" data-state={s.state} className="flex items-center gap-2 py-1.5">
@@ -119,24 +136,52 @@ export function SessionList({ sessions, run, preview }: { sessions: SessionDto[]
             <span className="min-w-0 flex-1 truncate">{s.title ?? <span className="text-stone-500">Untitled session</span>}</span>
             {s.gitBranch && <span className="shrink-0 font-mono text-xs text-stone-500">{s.gitBranch}</span>}
             <span className="w-16 shrink-0 text-right text-xs text-stone-500">{ago(s.lastActiveAt)}</span>
-            <span className="flex shrink-0 gap-1">
-              <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: s.id })}>
-                Terminal
-              </Action>
-              <Action small title="Open in the Claude desktop app" onClick={() => run({ kind: 'desktop', sessionId: s.id })}>
-                Desktop
-              </Action>
-            </span>
+            {s.resumeProblem === null ? (
+              <span className="flex shrink-0 gap-1">
+                <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: s.id })}>
+                  Terminal
+                </Action>
+                <Action small title="Open in the Claude desktop app" onClick={() => run({ kind: 'desktop', sessionId: s.id })}>
+                  Desktop
+                </Action>
+              </span>
+            ) : (
+              <span className="shrink-0 text-xs text-stone-500" title={s.resumeProblem}>
+                not saved yet
+              </span>
+            )}
           </li>
         ))}
       </ul>
       {preview !== undefined && sessions.length > preview && (
-        <button type="button" className="mt-1 text-xs text-stone-500 underline" onClick={() => setShowAll(!showAll)}>
+        <button type="button" className="mt-1 mr-3 text-xs text-stone-500 underline" onClick={() => setShowAll(!showAll)}>
           {showAll ? 'Show fewer' : `Show all ${sessions.length}`}
         </button>
+      )}
+      {gone.length > 0 && (
+        <>
+          <button type="button" data-testid="unreopenable-toggle" className="mt-1 text-xs text-stone-500 underline" onClick={() => setShowGone(!showGone)}>
+            {showGone ? 'Hide' : `${gone.length} more can't be reopened`}
+          </button>
+          {showGone && (
+            <ul className="mt-1 space-y-0.5 text-xs text-stone-500">
+              {gone.map((s) => (
+                <li key={s.id} data-testid="unreopenable-row" className="flex gap-2">
+                  <span className="min-w-0 flex-1 truncate">{s.title ?? 'Untitled session'}</span>
+                  <span className="shrink-0">{ago(s.lastActiveAt)}</span>
+                  <span className="shrink-0 truncate" title={s.resumeProblem ?? ''}>
+                    {s.resumeProblem?.startsWith('Its folder') ? 'folder gone' : 'no saved conversation'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </>
   );
 }
 
 export const openProject = (slug: string) => navigate(`/p/${slug}`);
+
+export const listedSessions = (p: ProjectDto) => listed(p.sessions);

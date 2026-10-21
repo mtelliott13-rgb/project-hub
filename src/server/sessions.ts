@@ -68,14 +68,17 @@ export function titleFromInfo(info: SDKSessionInfo): string | null {
 
 /**
  * Backfills sessions the hooks never saw and refreshes titles and branches.
- * Hook-owned fields (state, timestamps of known sessions) are left alone.
+ * Every session the SDK reports has a saved conversation, so it is marked
+ * resumable. When `infos` is the SDK's complete listing, sessions missing
+ * from it are marked not resumable. Hook-owned fields (state, timestamps of
+ * known sessions) are left alone.
  */
-export function syncFromSdk(db: Db, infos: SDKSessionInfo[], projects: Project[]): number {
+export function syncFromSdk(db: Db, infos: SDKSessionInfo[], projects: Project[], opts: { complete?: boolean } = {}): number {
   let changed = 0;
   db.transaction((tx) => {
     for (const info of infos) {
       if (!info.cwd) continue;
-      const fresh = { title: titleFromInfo(info), gitBranch: info.gitBranch ?? null };
+      const fresh = { title: titleFromInfo(info), gitBranch: info.gitBranch ?? null, resumable: true };
       const res = tx
         .insert(sessions)
         .values({
@@ -91,8 +94,22 @@ export function syncFromSdk(db: Db, infos: SDKSessionInfo[], projects: Project[]
         .run();
       changed += res.changes;
     }
+    if (opts.complete) {
+      changed += tx
+        .update(sessions)
+        .set({ resumable: false })
+        .where(and(eq(sessions.resumable, true), notInArray(sessions.id, infos.map((i) => i.sessionId))))
+        .run().changes;
+    }
   });
   return changed;
+}
+
+/** A session can be reopened when Claude Code saved its conversation and its folder still exists. */
+export function resumeProblem(s: Pick<Session, 'resumable' | 'cwd'>, exists: (dir: string) => boolean): string | null {
+  if (!s.resumable) return "Claude Code didn't save a conversation for this session, so it can't be reopened";
+  if (!exists(s.cwd)) return `Its folder no longer exists: ${s.cwd}`;
+  return null;
 }
 
 export const agentSchema = z.object({

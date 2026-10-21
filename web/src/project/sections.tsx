@@ -6,7 +6,7 @@ import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
 import { MonetizeSection } from './MonetizeSection.tsx';
 import { NotesSection } from './NotesSection.tsx';
-import { SessionList, type Run } from './parts.tsx';
+import { listedSessions, SessionList, type Run } from './parts.tsx';
 
 export type SectionProps = { project: ProjectDto; run: Run };
 
@@ -30,7 +30,7 @@ const comingIn = (phase: number, what: string) =>
 export const SECTIONS: Section[] = [
   {
     id: 'sessions',
-    title: (p) => `Sessions (${p.sessions.length})`,
+    title: (p) => `Sessions (${listedSessions(p).length})`,
     column: 'main',
     Component: ({ project, run }) => <SessionList sessions={project.sessions} run={run} preview={10} />,
   },

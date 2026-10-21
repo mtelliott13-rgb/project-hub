@@ -10,6 +10,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 import { TERMINAL_APP, EDITOR_APP } from './config.ts';
 import type { Project, Session } from './db/schema.ts';
+import { resumeProblem } from './sessions.ts';
 
 // Session and chat ids are UUIDs; anything else is refused before it gets near a shell.
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'must be a UUID');
@@ -66,6 +67,13 @@ export function planLaunch(req: LaunchRequest, look: LaunchLookup): LaunchPlan {
     if (!s) throw new LaunchError(404, `Unknown session ${id}`);
     return s;
   };
+  // `claude --resume` needs a saved conversation and the folder it ran in.
+  const reopenable = (id: string) => {
+    const s = session(id);
+    const problem = resumeProblem(s, look.exists);
+    if (problem) throw new LaunchError(409, problem);
+    return s;
+  };
   const project = (s: string) => {
     const p = look.project(s);
     if (!p) throw new LaunchError(404, `Unknown project ${s}`);
@@ -87,12 +95,12 @@ export function planLaunch(req: LaunchRequest, look: LaunchLookup): LaunchPlan {
 
   switch (req.kind) {
     case 'session': {
-      const s = session(req.sessionId);
-      return { via: 'terminal', cwd: folder(s.cwd), argv: ['claude', '--resume', s.id] };
+      const s = reopenable(req.sessionId);
+      return { via: 'terminal', cwd: s.cwd, argv: ['claude', '--resume', s.id] };
     }
     case 'desktop': {
-      const s = session(req.sessionId);
-      return { via: 'direct', cwd: folder(s.cwd), argv: ['claude', '--desktop', '--resume', s.id] };
+      const s = reopenable(req.sessionId);
+      return { via: 'direct', cwd: s.cwd, argv: ['claude', '--desktop', '--resume', s.id] };
     }
     case 'new-session': {
       const repo = pick(project(req.slug).repos, req.path, 'repos');

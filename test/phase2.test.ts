@@ -38,7 +38,7 @@ const project = (over: Partial<Project> = {}): Project => ({
   ...over,
 });
 
-const session = { id: SID, cwd: "/u/code/acme/.claude/worktrees/it's here" } as Session;
+const session = { id: SID, cwd: "/u/code/acme/.claude/worktrees/it's here", resumable: true } as Session;
 
 const lookup = (over: Partial<LaunchLookup> = {}): LaunchLookup => ({
   session: (id) => (id === SID ? session : undefined),
@@ -123,7 +123,7 @@ describe('POST /api/launch', () => {
     fs.mkdirSync(repo);
     const db = openDb(path.join(dir, 'hub.db'), MIGRATIONS_DIR);
     syncProjects(db, [{ slug: 'acme', name: 'Acme', repos: [repo], folders: [], github: [], keywords: [], sessions: [], archived: false }]);
-    db.insert(sessions).values({ id: SID, projectSlug: 'acme', cwd: repo, state: 'ended', lastActiveAt: new Date() }).run();
+    db.insert(sessions).values({ id: SID, projectSlug: 'acme', cwd: repo, state: 'ended', resumable: true, lastActiveAt: new Date() }).run();
     const webDir = path.join(dir, 'web');
     fs.mkdirSync(webDir);
     fs.writeFileSync(path.join(webDir, 'index.html'), '<html><head><title>Hub</title></head><body></body></html>');

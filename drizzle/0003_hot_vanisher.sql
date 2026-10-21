@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `resumable` integer DEFAULT false NOT NULL;

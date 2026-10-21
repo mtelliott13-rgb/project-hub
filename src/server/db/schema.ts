@@ -37,6 +37,10 @@ export const sessions = sqliteTable(
     gitBranch: text('git_branch'),
     // Where it ran, as `claude agents --json` reports it (e.g. "interactive").
     kind: text('kind'),
+    // Whether Claude Code has a saved conversation for it (the Agent SDK lists
+    // it), so `claude --resume` can reopen it. Sessions that ended before
+    // anything was saved, or ran without persistence, never get this.
+    resumable: integer('resumable', { mode: 'boolean' }).notNull().default(false),
     state: text('state', { enum: ['running', 'ended'] }).notNull(),
     endReason: text('end_reason'),
     startedAt: integer('started_at', { mode: 'timestamp_ms' }),

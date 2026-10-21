@@ -6,7 +6,8 @@ import type { ProjectInput } from '../../src/server/projects-file.ts';
 
 // Dates arrive as ISO strings over JSON.
 type Jsonified<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] extends Date | null ? string | null : T[K] };
-export type SessionDto = Jsonified<Session>;
+/** `resumeProblem` says why a session can't be reopened; null means Resume works. */
+export type SessionDto = Jsonified<Session> & { resumeProblem: string | null };
 export type ProjectDto = Jsonified<Project> & { sessions: SessionDto[] };
 export type { FolderEntry, ProjectInput };
 export type Browse = { path: string; parent: string | null; isRepo: boolean; entries: FolderEntry[] };

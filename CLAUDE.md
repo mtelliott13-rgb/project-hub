@@ -33,6 +33,7 @@ Rules:
 
 - Never store prompt text. Hook payloads go through a zod schema that drops unknown keys, and an SDK `summary` that is really the first prompt is treated as no title.
 - `model` stays empty for now: this Claude Code version's SessionStart payload has no `model` field, and the transcript format is internal, so we don't read it.
+- A session is `resumable` only once the Agent SDK lists it (a conversation was saved). The full listing every 5 minutes sets and clears the flag, and the 3-second lookup after hook activity sets it. Hooks also fire for sessions that never save a conversation (exited before the first message, or headless runs without persistence), so hooks alone never make one resumable. The API adds `resumeProblem` (no saved conversation, or the folder is gone); Resume picks the newest session without one, rows offer Terminal/Desktop only for those, and the launcher refuses the rest with 409.
 - "Running" comes from SessionStart/Stop hooks plus `claude agents --json` every 15 s. A session that was listed and then disappears is marked ended.
 - Known issue: under the hub, `claude agents --json` sometimes spins on CPU until the 15 s timeout, though it answers in ~0.2 s from a shell or a test launchd job. A failed poll changes nothing (hooks still update state), and polls never overlap.
 

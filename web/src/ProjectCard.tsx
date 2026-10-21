@@ -1,7 +1,7 @@
 // One card on the home page. Clicking its name or any empty part of it opens the project's page.
 import type { MouseEvent } from 'react';
 import type { ProjectDto } from './api.ts';
-import { openProject, ProjectActions, ProjectMenu, SessionList, StatusBadge, type Run } from './project/parts.tsx';
+import { listedSessions, openProject, ProjectActions, ProjectMenu, SessionList, StatusBadge, type Run } from './project/parts.tsx';
 import { Link } from './router.tsx';
 import { Row, shortenHome } from './ui.tsx';
 
@@ -46,7 +46,7 @@ export function ProjectCard({ project: p, run }: { project: ProjectDto; run: Run
       <div className="mt-3">
         <ProjectActions project={p} run={run} />
       </div>
-      <h3 className="mt-4 text-xs font-medium tracking-wide text-stone-500 uppercase">Sessions ({p.sessions.length})</h3>
+      <h3 className="mt-4 text-xs font-medium tracking-wide text-stone-500 uppercase">Sessions ({listedSessions(p).length})</h3>
       <SessionList sessions={p.sessions} run={run} preview={5} />
     </li>
   );

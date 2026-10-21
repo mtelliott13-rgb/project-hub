@@ -79,7 +79,7 @@ const jobs = monetizeJobs(
 );
 
 async function refreshFromSdk() {
-  if (syncFromSdk(db, await listAllSessions(), listAllProjects(db)) > 0) feed.notify();
+  if (syncFromSdk(db, await listAllSessions(), listAllProjects(db), { complete: true }) > 0) feed.notify();
 }
 
 // `claude agents --json` occasionally hangs when run from the hub (see CLAUDE.md),
