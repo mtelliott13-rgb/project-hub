@@ -3,3 +3,17 @@ dist/
 *.db
 *.db-*
 .DS_Store
+
+# Secrets, logs and local-only files - never commit. Runtime data (hub.db,
+# tokens, notes, ideas) lives in ~/.project-hub, outside the repo.
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+*.pem
+*.key
+.claude/*.local.json
+# The source plan; SPEC.md holds its content.
+*.pdf
