@@ -3,12 +3,15 @@
 import type { Project, Session } from '../../src/server/db/schema.ts';
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
+import type { RepoStatus } from '../../src/server/repos.ts';
 
 // Dates arrive as ISO strings over JSON.
 type Jsonified<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] extends Date | null ? string | null : T[K] };
 /** `resumeProblem` says why a session can't be reopened; null means Resume works. */
 export type SessionDto = Jsonified<Session> & { resumeProblem: string | null };
-export type ProjectDto = Jsonified<Project> & { sessions: SessionDto[] };
+/** `repoStatus` lines up with `repos`; an entry is null until its first check. */
+export type ProjectDto = Jsonified<Project> & { sessions: SessionDto[]; repoStatus: (RepoStatus | null)[] };
+export type { RepoStatus };
 export type { FolderEntry, ProjectInput };
 export type Browse = { path: string; parent: string | null; isRepo: boolean; entries: FolderEntry[] };
 
@@ -77,3 +80,7 @@ export type CollectorStatus = (
   | { state: 'port-busy'; pid: number; command: string }
 ) & { port: number; sources: SourceHealth[] | null; error: string | null };
 export const fetchCollector = (slug: string) => hub<CollectorStatus>(`/api/projects/${slug}/collector`);
+
+// Phase 5: check a project's repos now.
+export const refreshRepos = (slug: string) =>
+  hub<{ ok: true; repoStatus: (RepoStatus | null)[] }>(`/api/projects/${slug}/repos/refresh`, { method: 'POST', body: {} });

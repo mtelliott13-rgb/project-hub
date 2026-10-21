@@ -6,6 +6,7 @@ import type { LaunchPlan } from '../src/server/launcher.ts';
 import { createProjectStore } from '../src/server/project-store.ts';
 import { projectDocs } from '../src/server/docs.ts';
 import { monetizeJobs, type MonetizeResult } from '../src/server/monetize.ts';
+import { repoPoller, type RepoStatus } from '../src/server/repos.ts';
 
 /** The hub's own origin in tests; requests go to full URLs so the Host check sees it. */
 export const HUB = 'http://127.0.0.1:4747';
@@ -22,6 +23,19 @@ export function testDeps(db: Db) {
   const launched: LaunchPlan[] = [];
   // Fake processes for collector tests: port -> listeners.
   const listening = new Map<number, Listener[]>();
+  // Repo checks never touch git or GitHub here: they return what's in `repoStates`.
+  const repoStates = new Map<string, Omit<RepoStatus, 'dir' | 'checkedAt'>>();
+  const repoChecks: string[] = [];
+  let repoDirs: string[] = [];
+  const repos = repoPoller({
+    repos: () => repoDirs,
+    check: async (dir) => {
+      repoChecks.push(dir);
+      const s = repoStates.get(dir) ?? { git: null, gitError: 'no fake state', github: null, githubError: null };
+      return { dir, checkedAt: new Date().toISOString(), ...s };
+    },
+    onChange: () => {},
+  });
   const dir = path.dirname(db.$client.name);
   const projectsFile = path.join(dir, 'projects.yaml');
   const store = createProjectStore(db, projectsFile, path.join(dir, 'backups/projects.last.yaml'), () => {});
@@ -39,6 +53,12 @@ export function testDeps(db: Db) {
   return {
     launched,
     listening,
+    repos,
+    repoStates,
+    repoChecks,
+    setRepoDirs: (dirs: string[]) => {
+      repoDirs = dirs;
+    },
     projectsFile,
     store,
     docs,
@@ -57,6 +77,7 @@ export function testDeps(db: Db) {
       launcher: async (plan: LaunchPlan) => void launched.push(plan),
       claudeDesktopInstalled: true,
       probe: { listeners: async (port: number) => listening.get(port) ?? [] },
+      repos,
     },
   };
 }

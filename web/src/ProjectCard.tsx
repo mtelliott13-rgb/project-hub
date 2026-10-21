@@ -3,7 +3,8 @@ import type { MouseEvent } from 'react';
 import type { ProjectDto } from './api.ts';
 import { listedSessions, openProject, ProjectActions, ProjectMenu, SessionList, StatusBadge, type Run } from './project/parts.tsx';
 import { Link } from './router.tsx';
-import { Row, shortenHome } from './ui.tsx';
+import { repoFacts } from './project/RepoSection.tsx';
+import { ago, Row, shortenHome } from './ui.tsx';
 
 export type { Run };
 
@@ -43,6 +44,22 @@ export function ProjectCard({ project: p, run }: { project: ProjectDto; run: Run
         {p.github.length > 0 && <Row label="GitHub" values={p.github} />}
         {p.keywords.length > 0 && <Row label="Keywords" values={p.keywords} />}
       </dl>
+      {p.repoStatus.some((s) => s?.git) && (
+        <ul className="mt-3 space-y-1 text-xs" data-testid="card-repos">
+          {p.repoStatus.map((s, i) =>
+            s?.git ? (
+              <li key={p.repos[i]}>
+                <span className="text-stone-700 dark:text-stone-300">{repoFacts(s).join(' · ')}</span>
+                {s.git.commits[0] && (
+                  <span className="block truncate text-stone-500">
+                    Last commit: {s.git.commits[0].subject} · {ago(s.git.commits[0].date)}
+                  </span>
+                )}
+              </li>
+            ) : null,
+          )}
+        </ul>
+      )}
       <div className="mt-3">
         <ProjectActions project={p} run={run} />
       </div>

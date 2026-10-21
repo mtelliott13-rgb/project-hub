@@ -16,6 +16,7 @@ import {
   type ProcessProbe,
 } from './collector.ts';
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
+import type { RepoPoller } from './repos.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
@@ -42,7 +43,9 @@ type AppDeps = DocDeps & {
   /** For collectors' status endpoints; tests pass a fake. */
   fetcher?: typeof fetch;
   /** Called after a hook event is stored, e.g. to refresh that session's title. */
-  onSessionActivity?: (sessionId: string, cwd: string) => void;
+  onSessionActivity?: (sessionId: string, cwd: string, event: string) => void;
+  /** Repo and GitHub status (Phase 5). */
+  repos: RepoPoller;
 };
 
 /**
@@ -68,7 +71,7 @@ export function hubPageRefusal(c: Context, origins: string[], uiToken: string): 
 }
 
 export function createApp(deps: AppDeps) {
-  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity } = deps;
+  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity, repos } = deps;
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
@@ -102,7 +105,10 @@ export function createApp(deps: AppDeps) {
     const exists = (dir: string) => fs.existsSync(dir);
     // `resumeProblem` says why a session can't be reopened; null means it can.
     const all = sessionsForProjects(db, projects.map((p) => p.slug)).map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }));
-    return c.json(projects.map((p) => ({ ...p, sessions: all.filter((s) => s.projectSlug === p.slug) })));
+    // `repoStatus` is one entry per repo in `repos`, null until its first check.
+    return c.json(
+      projects.map((p) => ({ ...p, sessions: all.filter((s) => s.projectSlug === p.slug), repoStatus: p.repos.map((dir) => repos.get(dir)) })),
+    );
   });
 
   /** Whether projects.yaml currently parses. When it doesn't, the hub keeps the last good version. */
@@ -166,7 +172,9 @@ export function createApp(deps: AppDeps) {
     if (!parsed.success) return c.json({ error: 'bad payload' }, 400);
     if (applyHookEvent(db, parsed.data, listAllProjects(db))) {
       feed.notify();
-      onSessionActivity?.(parsed.data.session_id, parsed.data.cwd);
+      onSessionActivity?.(parsed.data.session_id, parsed.data.cwd, parsed.data.hook_event_name);
+      // Claude may have committed or pushed: check that repo now, not in 3 minutes.
+      if (parsed.data.hook_event_name === 'Stop') for (const dir of repos.reposFor(parsed.data.cwd)) void repos.refresh(dir);
     }
     return c.body(null, 204);
   });
@@ -203,6 +211,14 @@ export function createApp(deps: AppDeps) {
       console.error('Launch failed:', e instanceof Error ? e.message : e);
       return c.json({ error: `Launch failed: ${e instanceof Error ? e.message : e}` }, 500);
     }
+  });
+
+  /** Checks a project's repos now (the page's Refresh). Read-only for the repos. */
+  app.post('/api/projects/:slug/repos/refresh', async (c) => {
+    const p = projectRow(c.req.param('slug'));
+    if (!p) return c.json({ error: 'Unknown project' }, 404);
+    await Promise.all(p.repos.map((dir) => repos.refresh(dir)));
+    return c.json({ ok: true, repoStatus: p.repos.map((dir) => repos.get(dir)) });
   });
 
   /** Whether a project's collector is running, and its sources' health. Read-only. */

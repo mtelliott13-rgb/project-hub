@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.ts';
@@ -26,12 +27,14 @@ import { projectDocs } from './docs.ts';
 import { ChangeFeed } from './events.ts';
 import { monetizeJobs, runMonetize } from './monetize.ts';
 import { macProbe } from './collector.ts';
+import { ghRunner, repoPoller, repoStatus } from './repos.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
 import { ensureToken } from './token.ts';
 
 const TITLE_REFRESH_MS = 5 * 60_000;
+const REPO_POLL_MS = 3 * 60_000;
 const AGENTS_POLL_MS = 15_000;
 
 fs.mkdirSync(HUB_DIR, { recursive: true });
@@ -51,12 +54,22 @@ const feed = new ChangeFeed();
 const logError = (what: string) => (err: unknown) =>
   console.error(`${new Date().toISOString()} ${what} failed:`, err instanceof Error ? err.message : err);
 
+// Phase 5: every active project's repos, every 3 minutes and after each Stop event.
+const gh = ghRunner(path.join(os.homedir(), '.local/bin/gh'));
+const repos = repoPoller({
+  repos: () => listAllProjects(db).filter((p) => !p.archived).flatMap((p) => p.repos),
+  check: (dir) => repoStatus(dir, gh),
+  onChange: () => feed.notify(),
+});
+
 // projects.yaml is read now and again whenever it changes, by hand or from the page.
 let lastFileError: string | null = null;
 const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'projects.last.yaml'), () => {
   const error = store.error();
   if (error && error !== lastFileError) logError('Reading projects.yaml')(error);
   lastFileError = error;
+  // A repo just added to projects.yaml is checked now rather than at the next poll.
+  for (const p of listAllProjects(db)) for (const dir of p.repos) if (!p.archived && !repos.get(dir)) void repos.refresh(dir);
   feed.notify();
 });
 store.reload();
@@ -128,6 +141,7 @@ const app = createApp({
   jobs,
   claudeDesktopInstalled: fs.existsSync(CLAUDE_DESKTOP_APP),
   onSessionActivity: refreshTitleSoon,
+  repos,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
@@ -135,4 +149,6 @@ serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   refreshRunning().catch(logError('claude agents'));
   setInterval(() => refreshFromSdk().catch(logError('Title refresh')), TITLE_REFRESH_MS);
   setInterval(() => refreshRunning().catch(logError('claude agents')), AGENTS_POLL_MS);
+  repos.refreshAll().catch(logError('Repo check'));
+  setInterval(() => repos.refreshAll().catch(logError('Repo check')), REPO_POLL_MS);
 });

@@ -11,7 +11,7 @@ Rules:
 
 - macOS (Apple Silicon), terminal app: **Terminal.app**, editor: **VS Code**. The Phase 2 launcher targets these.
 - No Homebrew. Node.js 22 lives in `~/.local/node` (on PATH via `~/.zshrc`); pnpm comes from corepack. Install nothing that needs an admin password.
-- `gh` 2.102.0 lives in `~/.local/gh` (linked from `~/.local/bin/gh`), signed in as mtelliott13-rgb. That account has no repos yet, so no project has `github:` set.
+- `gh` 2.102.0 lives in `~/.local/gh` (linked from `~/.local/bin/gh`), signed in as mtelliott13-rgb. career-hq, demo-dashboard and project-hub are private repos there (pushed 2026-10-21); each repo's git config has a repo-local credential helper that calls `gh auth git-credential`. meme-radar has no remote yet.
 
 ## Layout
 
@@ -67,3 +67,9 @@ Rules:
 - It counts as running when a process listens on the port from inside the project's first repo (`src/server/collector.ts`, lsof/ps; tests use a fake probe). A listener from elsewhere shows as "port busy".
 - Start and Stop are `/api/launch` kinds `collector-start` / `collector-stop` with only the slug, so they get the Phase 2 checks and `dryRun`. Start opens a Terminal window running the command and is refused while it runs (one copy only). Stop sends SIGINT (Ctrl+C) to that one process after a confirmation, and waits up to 15 s for it to exit.
 - `GET /api/projects/:slug/collector` reports the state and the app's source health; the page's Collector section polls it every 5 s and is shown only for projects with a collector (`show` in `SECTIONS`).
+
+## Repo and GitHub (Phase 5)
+
+- `src/server/repos.ts`: per repo, `simple-git` for branch, upstream, uncommitted count, ahead/behind and the last 10 commits; `gh pr list` and `gh run list` for open PRs (with their checks) and the newest CI run on the branch. The GitHub repo comes from the `origin` remote. Read-only: the hub never fetches, commits or pushes, so "to pull" only counts what your last fetch saw.
+- git runs with a minimal environment and `GIT_OPTIONAL_LOCKS=0` (allowed via simple-git's `allowEnvironment`), so polling never takes git's lock or rewrites the index while you work.
+- `repoPoller` checks every active project's repos every 3 minutes and right after each Stop hook for the repo the session ran in; one check per repo at a time. Results are in memory and come with `/api/projects` as `repoStatus` (lined up with `repos`). `POST /api/projects/:slug/repos/refresh` checks now. Tests use real throwaway git repos and a fake `gh`.
