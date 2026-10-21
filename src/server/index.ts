@@ -25,6 +25,7 @@ import { generateCommand } from './doc-routes.ts';
 import { projectDocs } from './docs.ts';
 import { ChangeFeed } from './events.ts';
 import { monetizeJobs, runMonetize } from './monetize.ts';
+import { macProbe } from './collector.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
@@ -121,6 +122,7 @@ const app = createApp({
   origins: HUB_ORIGINS,
   launcher,
   store,
+  probe: macProbe,
   docs,
   ideasFile: IDEAS_FILE,
   jobs,

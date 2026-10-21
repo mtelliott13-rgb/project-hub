@@ -1,4 +1,5 @@
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { CollectorConfig } from '../projects.ts';
 
 // Identity and match rules for each project. projects.yaml is the source of
 // truth for the match rules; colour, pinned and archived belong to the hub.
@@ -12,6 +13,8 @@ export const projects = sqliteTable('projects', {
   keywords: text('keywords', { mode: 'json' }).$type<string[]>().notNull(),
   // `sessions:` in projects.yaml: session ids pinned to this project.
   pinnedSessions: text('pinned_sessions', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  // `collector:` in projects.yaml (see CollectorConfig), or null.
+  collector: text('collector', { mode: 'json' }).$type<CollectorConfig | null>(),
   colour: text('colour'),
   pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
   // Set when a project disappears from projects.yaml, so its history is kept.

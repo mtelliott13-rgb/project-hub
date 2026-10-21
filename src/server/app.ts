@@ -6,6 +6,15 @@ import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listAllProjects, type Db } from './db/index.ts';
 import { projects, sessions } from './db/schema.ts';
+import {
+  collectorDir,
+  collectorLaunchSchema,
+  findCollector,
+  planCollectorStart,
+  planCollectorStop,
+  sourceHealth,
+  type ProcessProbe,
+} from './collector.ts';
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
@@ -28,6 +37,10 @@ type AppDeps = DocDeps & {
   claudeDesktopInstalled: boolean;
   /** projects.yaml, as read and written by the hub page. */
   store: ProjectStore;
+  /** How collectors' processes are found (lsof/ps on macOS; a fake in tests). */
+  probe: ProcessProbe;
+  /** For collectors' status endpoints; tests pass a fake. */
+  fetcher?: typeof fetch;
   /** Called after a hook event is stored, e.g. to refresh that session's title. */
   onSessionActivity?: (sessionId: string, cwd: string) => void;
 };
@@ -55,7 +68,10 @@ export function hubPageRefusal(c: Context, origins: string[], uiToken: string): 
 }
 
 export function createApp(deps: AppDeps) {
-  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, onSessionActivity } = deps;
+  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity } = deps;
+  const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
+  // When Start was last clicked per project, to show "starting" until the port opens.
+  const startClicked = new Map<string, number>();
   const app = new Hono();
 
   // Only answer requests addressed to the hub itself. This stops DNS rebinding:
@@ -156,16 +172,27 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post('/api/launch', async (c) => {
-    const parsed = launchRequestSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'bad launch request' }, 400);
-    const req = parsed.data;
+    const body = await c.req.json().catch(() => null);
+    const collectorReq = collectorLaunchSchema.safeParse(body);
+    const launchReq = launchRequestSchema.safeParse(body);
+    const req = collectorReq.data ?? launchReq.data;
+    if (!req) return c.json({ error: 'bad launch request' }, 400);
     try {
-      const plan = planLaunch(req, {
-        session: (id) => db.select().from(sessions).where(eq(sessions.id, id)).get(),
-        project: (slug) => db.select().from(projects).where(eq(projects.slug, slug)).get(),
-        claudeDesktopInstalled,
-        exists: (p) => fs.existsSync(p),
-      });
+      let plan;
+      if (collectorReq.data) {
+        const { kind, slug, dryRun } = collectorReq.data;
+        const p = projectRow(slug);
+        if (!p) throw new LaunchError(404, `Unknown project ${slug}`);
+        plan = kind === 'collector-start' ? await planCollectorStart(p, probe) : await planCollectorStop(p, probe);
+        if (kind === 'collector-start' && !dryRun) startClicked.set(p.slug, Date.now());
+      } else {
+        plan = planLaunch(launchReq.data!, {
+          session: (id) => db.select().from(sessions).where(eq(sessions.id, id)).get(),
+          project: projectRow,
+          claudeDesktopInstalled,
+          exists: (p) => fs.existsSync(p),
+        });
+      }
       const command = describePlan(plan);
       if (req.dryRun) return c.json({ ok: true, dryRun: true, command });
       console.log(`${new Date().toISOString()} Launch ${req.kind}: ${command}`);
@@ -175,6 +202,23 @@ export function createApp(deps: AppDeps) {
       if (e instanceof LaunchError) return c.json({ error: e.message }, e.status);
       console.error('Launch failed:', e instanceof Error ? e.message : e);
       return c.json({ error: `Launch failed: ${e instanceof Error ? e.message : e}` }, 500);
+    }
+  });
+
+  /** Whether a project's collector is running, and its sources' health. Read-only. */
+  app.get('/api/projects/:slug/collector', async (c) => {
+    const p = projectRow(c.req.param('slug'));
+    if (!p?.collector) return c.json({ error: 'No collector for this project' }, 404);
+    try {
+      const proc = await findCollector(p.collector, collectorDir(p), probe);
+      const clicked = startClicked.get(p.slug);
+      const starting = proc.state === 'stopped' && clicked !== undefined && Date.now() - clicked < 60_000;
+      if (proc.state === 'running') startClicked.delete(p.slug);
+      const health = proc.state === 'running' ? await sourceHealth(p.collector.status_url, fetcher) : { sources: null, error: null };
+      return c.json({ ...proc, ...(starting && { state: 'starting' }), port: p.collector.port, ...health });
+    } catch (e) {
+      if (e instanceof LaunchError) return c.json({ error: e.message }, e.status);
+      throw e;
     }
   });
 

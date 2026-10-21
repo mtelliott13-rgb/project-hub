@@ -68,3 +68,12 @@ export const addIdea = (text: string, scope: string) => hub<Ideas>('/api/ideas',
 export const changeIdea = (idea: Idea, change: { text?: string; scope?: string; done?: boolean }) =>
   hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'PUT', body: { expect: idea.text, ...change } });
 export const deleteIdea = (idea: Idea) => hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'DELETE', body: { expect: idea.text } });
+
+// Collectors (projects.yaml `collector:`), e.g. Meme Radar's app.
+export type SourceHealth = { id: string; label: string; status: string; lastSuccess: string | null; lastError: string | null };
+export type CollectorStatus = (
+  | { state: 'running'; pid: number; command: string; startedAt: string | null }
+  | { state: 'stopped' | 'starting' }
+  | { state: 'port-busy'; pid: number; command: string }
+) & { port: number; sources: SourceHealth[] | null; error: string | null };
+export const fetchCollector = (slug: string) => hub<CollectorStatus>(`/api/projects/${slug}/collector`);

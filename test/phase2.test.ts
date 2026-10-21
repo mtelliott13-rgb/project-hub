@@ -30,6 +30,7 @@ const project = (over: Partial<Project> = {}): Project => ({
   claudeProject: `https://claude.ai/project/${PROJ}`,
   keywords: [],
   pinnedSessions: [],
+  collector: null,
   colour: null,
   pinned: false,
   archived: false,

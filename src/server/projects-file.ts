@@ -143,6 +143,7 @@ export function setArchived(text: string, slug: string, archived: boolean, fallb
     map = doc.createNode({ slug }) as YAMLMap;
     setFields(doc, map, { ...fallback, claude_project: fallback.claude_project ?? null });
     if (fallback.sessions.length) map.set('sessions', flow(doc, fallback.sessions));
+    if (fallback.collector) map.set('collector', doc.createNode(fallback.collector));
     if (seq.items.length) map.spaceBefore = true;
     seq.items.push(map);
   }

@@ -5,7 +5,8 @@ export type LaunchBody =
   | { kind: 'session' | 'desktop'; sessionId: string }
   | { kind: 'new-session' | 'editor' | 'claude-project'; slug: string; path?: string }
   | { kind: 'chat'; chatId: string }
-  | { kind: 'from-pr'; slug: string; pr: number; path?: string };
+  | { kind: 'from-pr'; slug: string; pr: number; path?: string }
+  | { kind: 'collector-start' | 'collector-stop'; slug: string };
 
 /** Runs a launch and returns the exact command the hub ran. Throws with the hub's reason on failure. */
 export const launch = async (body: LaunchBody) => (await hub<{ command: string }>('/api/launch', { method: 'POST', body })).command;

@@ -31,12 +31,14 @@ export type LaunchRequest = z.infer<typeof launchRequestSchema>;
 
 /**
  * What to run. `terminal` opens a new terminal window in `cwd` running `argv`;
- * `open` runs macOS `open` with `argv`; `direct` runs `argv` in `cwd` with no window.
+ * `open` runs macOS `open` with `argv`; `direct` runs `argv` in `cwd` with no window;
+ * `signal` sends a signal to one process (a collector's Stop) and waits for it to exit.
  */
 export type LaunchPlan =
   | { via: 'terminal'; cwd: string; argv: string[] }
   | { via: 'open'; argv: string[] }
-  | { via: 'direct'; cwd: string; argv: string[] };
+  | { via: 'direct'; cwd: string; argv: string[] }
+  | { via: 'signal'; pid: number; signal: 'SIGINT'; what: string };
 
 export class LaunchError extends Error {
   status: 400 | 404 | 409;
@@ -139,7 +141,29 @@ export function describePlan(plan: LaunchPlan): string {
       return line(plan.argv);
     case 'direct':
       return `cd ${shellQuote(plan.cwd)} && ${line(plan.argv)}`;
+    case 'signal':
+      return `kill -INT ${plan.pid}   (the same as Ctrl+C, to ${plan.what})`;
   }
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Sends the signal, then waits up to `waitMs` for the process to exit. */
+export async function signalAndWait(pid: number, signal: NodeJS.Signals, waitMs = 15_000) {
+  process.kill(pid, signal);
+  const end = Date.now() + waitMs;
+  while (Date.now() < end) {
+    if (!alive(pid)) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`Sent ${signal} to process ${pid}, but it was still running after ${waitMs / 1000} seconds`);
 }
 
 /** The script a terminal plan writes. It deletes itself, then replaces itself with the command. */
@@ -176,6 +200,9 @@ export function macLauncher(launchDir: string) {
         return;
       case 'direct':
         await execa(plan.argv[0], plan.argv.slice(1), { cwd: plan.cwd, stdin: 'ignore', timeout: 30_000 });
+        return;
+      case 'signal':
+        await signalAndWait(plan.pid, plan.signal);
         return;
     }
   };

@@ -4,6 +4,7 @@
 import type { ComponentType } from 'react';
 import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
+import { CollectorSection } from './CollectorSection.tsx';
 import { MonetizeSection } from './MonetizeSection.tsx';
 import { NotesSection } from './NotesSection.tsx';
 import { listedSessions, SessionList, type Run } from './parts.tsx';
@@ -15,6 +16,8 @@ export type Section = {
   title: (p: ProjectDto) => string;
   column: 'main' | 'side';
   Component: ComponentType<SectionProps>;
+  /** Show only for some projects; shown for all when absent. */
+  show?: (p: ProjectDto) => boolean;
 };
 
 /** Space kept for what a later phase adds. */
@@ -34,6 +37,7 @@ export const SECTIONS: Section[] = [
     column: 'main',
     Component: ({ project, run }) => <SessionList sessions={project.sessions} run={run} preview={10} />,
   },
+  { id: 'collector', title: () => 'Collector', column: 'main', Component: CollectorSection, show: (p) => p.collector !== null },
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: comingIn(5, 'Branch, commits, PRs and CI') },
   { id: 'files', title: () => 'Files and links', column: 'main', Component: comingIn(6, 'Recently changed files and saved links') },

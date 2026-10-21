@@ -60,3 +60,10 @@ Rules:
 - Generate runs only on click: `claude -p … --restricted --tools Read,Glob,Grep,WebSearch,WebFetch --permission-mode dontAsk --strict-mcp-config --no-session-persistence --output-format json` in the project's first existing repo or folder, with the others passed as `--add-dir` (`src/server/monetize.ts`). So it reads files and searches the web, can't edit or run commands, ignores user settings (no hooks fire), and saves no transcript. One run per project at a time; tests never run Claude.
 - Every `/api/*` call needs the page token, except `GET /api/health` and `/api/events`.
 - Deleting a project leaves its `projects/<slug>/` folder in place.
+
+## Collectors (Meme Radar)
+
+- A project can have a hand-edited `collector:` block in projects.yaml (`command` as an argument list, `port`, optional `status_url`); the page can't change it. Meme Radar's runs `caffeinate -i uv run python -m radar` in `~/meme-radar` on port 8000.
+- It counts as running when a process listens on the port from inside the project's first repo (`src/server/collector.ts`, lsof/ps; tests use a fake probe). A listener from elsewhere shows as "port busy".
+- Start and Stop are `/api/launch` kinds `collector-start` / `collector-stop` with only the slug, so they get the Phase 2 checks and `dryRun`. Start opens a Terminal window running the command and is refused while it runs (one copy only). Stop sends SIGINT (Ctrl+C) to that one process after a confirmation, and waits up to 15 s for it to exit.
+- `GET /api/projects/:slug/collector` reports the state and the app's source health; the page's Collector section polls it every 5 s and is shown only for projects with a collector (`show` in `SECTIONS`).

@@ -90,6 +90,7 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
           keywords: p.keywords,
           sessions: p.pinnedSessions,
           archived: false,
+          collector: p.collector ?? undefined,
         }),
       );
     },

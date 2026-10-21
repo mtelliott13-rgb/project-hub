@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { Db } from '../src/server/db/index.ts';
 import { ChangeFeed } from '../src/server/events.ts';
+import type { Listener } from '../src/server/collector.ts';
 import type { LaunchPlan } from '../src/server/launcher.ts';
 import { createProjectStore } from '../src/server/project-store.ts';
 import { projectDocs } from '../src/server/docs.ts';
@@ -19,6 +20,8 @@ export const PAGE_GET = { 'X-Hub-Token': 'ui-t0ken' };
  */
 export function testDeps(db: Db) {
   const launched: LaunchPlan[] = [];
+  // Fake processes for collector tests: port -> listeners.
+  const listening = new Map<number, Listener[]>();
   const dir = path.dirname(db.$client.name);
   const projectsFile = path.join(dir, 'projects.yaml');
   const store = createProjectStore(db, projectsFile, path.join(dir, 'backups/projects.last.yaml'), () => {});
@@ -35,6 +38,7 @@ export function testDeps(db: Db) {
   );
   return {
     launched,
+    listening,
     projectsFile,
     store,
     docs,
@@ -52,6 +56,7 @@ export function testDeps(db: Db) {
       origins: [HUB, 'http://localhost:4747'],
       launcher: async (plan: LaunchPlan) => void launched.push(plan),
       claudeDesktopInstalled: true,
+      probe: { listeners: async (port: number) => listening.get(port) ?? [] },
     },
   };
 }

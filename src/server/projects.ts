@@ -9,6 +9,22 @@ const expandHome = (p: string) =>
 
 const pathList = z.array(z.string().min(1)).default([]).transform((ps) => ps.map(expandHome));
 
+/**
+ * A long-running process the project page can show and start/stop, e.g. Meme
+ * Radar's collector. Set by hand in projects.yaml only (the page can't change
+ * it), so the page never chooses what gets run.
+ */
+export const collectorSchema = z.object({
+  // Run as is (no shell) in the project's first repo.
+  command: z.array(z.string().min(1)).min(1),
+  // It counts as running when a process in that repo listens on this port.
+  port: z.number().int().min(1).max(65535),
+  // Optional read-only health endpoint, e.g. http://127.0.0.1:8000/api/status.
+  status_url: z.url().optional(),
+});
+
+export type CollectorConfig = z.infer<typeof collectorSchema>;
+
 const projectSchema = z.object({
   slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'slug must be lowercase kebab-case'),
   name: z.string().min(1),
@@ -24,6 +40,7 @@ const projectSchema = z.object({
   sessions: z.array(z.string().min(1)).default([]),
   // Hidden from the home page; its sessions and history are kept.
   archived: z.boolean().default(false),
+  collector: collectorSchema.optional(),
 });
 
 const fileSchema = z.object({

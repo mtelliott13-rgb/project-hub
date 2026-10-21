@@ -15,7 +15,7 @@ export function ProjectPage({ slug, run }: { slug: string; run: Run }) {
 
   const where = [...p.repos, ...p.folders].map(shortenHome);
   const column = (c: Section['column']) =>
-    SECTIONS.filter((s) => s.column === c).map((s) => (
+    SECTIONS.filter((s) => s.column === c && (s.show?.(p) ?? true)).map((s) => (
       <section key={s.id} data-section={s.id} className="rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
         <h2 className="mb-2 text-xs font-medium tracking-wide text-stone-500 uppercase">{s.title(p)}</h2>
         <s.Component project={p} run={run} />
