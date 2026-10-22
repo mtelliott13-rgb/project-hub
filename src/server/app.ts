@@ -17,6 +17,7 @@ import {
 } from './collector.ts';
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { RepoPoller } from './repos.ts';
+import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
@@ -46,6 +47,8 @@ type AppDeps = DocDeps & {
   onSessionActivity?: (sessionId: string, cwd: string, event: string) => void;
   /** Repo and GitHub status (Phase 5). */
   repos: RepoPoller;
+  /** Where toolkit.yaml files are backed up before the hub first writes to them. */
+  toolkitBackupDir: string;
 };
 
 /**
@@ -71,7 +74,9 @@ export function hubPageRefusal(c: Context, origins: string[], uiToken: string): 
 }
 
 export function createApp(deps: AppDeps) {
-  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity, repos } = deps;
+  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity, repos, toolkitBackupDir } = deps;
+  // toolkit.yaml files already backed up during this run.
+  const toolkitBackedUp = new Set<string>();
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
@@ -107,7 +112,12 @@ export function createApp(deps: AppDeps) {
     const all = sessionsForProjects(db, projects.map((p) => p.slug)).map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }));
     // `repoStatus` is one entry per repo in `repos`, null until its first check.
     return c.json(
-      projects.map((p) => ({ ...p, sessions: all.filter((s) => s.projectSlug === p.slug), repoStatus: p.repos.map((dir) => repos.get(dir)) })),
+      projects.map((p) => ({
+        ...p,
+        sessions: all.filter((s) => s.projectSlug === p.slug),
+        repoStatus: p.repos.map((dir) => repos.get(dir)),
+        toolkit: toolkitSummary(p),
+      })),
     );
   });
 
@@ -213,6 +223,60 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  /** The full checklist, read fresh from the project's toolkit.yaml. */
+  app.get('/api/projects/:slug/toolkit', (c) => {
+    const p = projectRow(c.req.param('slug'));
+    const [file, ...others] = p ? findToolkitFiles(p) : [];
+    if (!file) return c.json({ error: 'No toolkit.yaml for this project' }, 404);
+    try {
+      return c.json({ ...readToolkit(file), others });
+    } catch (e) {
+      if (e instanceof ToolkitError) return c.json({ file, error: e.message }, 200);
+      throw e;
+    }
+  });
+
+  /**
+   * Sets one item's status in toolkit.yaml. The request names the item by
+   * position and name and says which version of the file it saw; the path
+   * comes from the project. A file changed since then is not overwritten:
+   * the answer is 409 with the current checklist.
+   */
+  app.put('/api/projects/:slug/toolkit/items/:index', async (c) => {
+    const p = projectRow(c.req.param('slug'));
+    const [file] = p ? findToolkitFiles(p) : [];
+    if (!file) return c.json({ error: 'No toolkit.yaml for this project' }, 404);
+    const body = (await c.req.json().catch(() => null)) as { name?: unknown; status?: unknown; version?: unknown } | null;
+    const index = Number(c.req.param('index'));
+    if (!Number.isInteger(index) || index < 0 || typeof body?.name !== 'string' || typeof body.version !== 'string' || !STATUSES.includes(body.status as ToolkitStatus)) {
+      return c.json({ error: `Send { name, version, status } with status one of: ${STATUSES.join(', ')}` }, 400);
+    }
+    try {
+      const toolkit = writeToolkitStatus({
+        file,
+        version: body.version,
+        index,
+        name: body.name,
+        status: body.status as ToolkitStatus,
+        backupDir: toolkitBackupDir,
+        backedUp: toolkitBackedUp,
+      });
+      console.log(`${new Date().toISOString()} Toolkit: ${p!.slug} "${body.name}" -> ${body.status}`);
+      feed.notify();
+      return c.json(toolkit);
+    } catch (e) {
+      if (!(e instanceof ToolkitError)) throw e;
+      if (e.status !== 409) return c.json({ error: e.message }, e.status);
+      let current = null;
+      try {
+        current = readToolkit(file);
+      } catch {
+        // The current file doesn't parse either; the page shows the error on reload.
+      }
+      return c.json({ error: e.message, current }, 409);
+    }
+  });
+
   /** Checks a project's repos now (the page's Refresh). Read-only for the repos. */
   app.post('/api/projects/:slug/repos/refresh', async (c) => {
     const p = projectRow(c.req.param('slug'));
@@ -257,6 +321,18 @@ export function createApp(deps: AppDeps) {
   app.get('*', page);
 
   return app;
+}
+
+/** For cards: "3 of 16 done" (parked items don't count), or why the file can't be read. */
+function toolkitSummary(p: { repos: string[]; folders: string[] }) {
+  const [file] = findToolkitFiles(p);
+  if (!file) return null;
+  try {
+    const t = readToolkit(file);
+    return { file, done: t.done, total: t.total, error: null };
+  } catch (e) {
+    return { file, done: 0, total: 0, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export const injectToken = (html: string, uiToken: string) =>

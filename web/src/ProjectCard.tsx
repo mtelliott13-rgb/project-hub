@@ -60,6 +60,17 @@ export function ProjectCard({ project: p, run }: { project: ProjectDto; run: Run
           )}
         </ul>
       )}
+      {p.toolkit && (
+        <p className="mt-2 text-sm" data-testid="card-toolkit" title={p.toolkit.error ?? p.toolkit.file}>
+          {p.toolkit.error ? (
+            <span className="text-amber-700">Toolkit: toolkit.yaml can't be read</span>
+          ) : (
+            <>
+              Toolkit: {p.toolkit.done} of {p.toolkit.total} done
+            </>
+          )}
+        </p>
+      )}
       <div className="mt-3">
         <ProjectActions project={p} run={run} />
       </div>

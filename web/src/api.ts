@@ -4,20 +4,36 @@ import type { Project, Session } from '../../src/server/db/schema.ts';
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
+import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
 
 // Dates arrive as ISO strings over JSON.
 type Jsonified<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] extends Date | null ? string | null : T[K] };
 /** `resumeProblem` says why a session can't be reopened; null means Resume works. */
 export type SessionDto = Jsonified<Session> & { resumeProblem: string | null };
-/** `repoStatus` lines up with `repos`; an entry is null until its first check. */
-export type ProjectDto = Jsonified<Project> & { sessions: SessionDto[]; repoStatus: (RepoStatus | null)[] };
+/** `repoStatus` lines up with `repos`; an entry is null until its first check. `toolkit` is null without a toolkit.yaml. */
+export type ProjectDto = Jsonified<Project> & {
+  sessions: SessionDto[];
+  repoStatus: (RepoStatus | null)[];
+  toolkit: { file: string; done: number; total: number; error: string | null } | null;
+};
 export type { RepoStatus };
 export type { FolderEntry, ProjectInput };
 export type Browse = { path: string; parent: string | null; isRepo: boolean; entries: FolderEntry[] };
 
 const token = () => document.querySelector<HTMLMetaElement>('meta[name="hub-token"]')?.content ?? '';
 
-/** Fetches JSON from the hub, with the token. Throws the hub's reason on failure. */
+/** A failed hub call: the hub's reason, its status, and the rest of its answer. */
+export class HubError extends Error {
+  status: number;
+  body: Record<string, unknown>;
+  constructor(message: string, status: number, body: Record<string, unknown>) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/** Fetches JSON from the hub, with the token. Throws a HubError with the hub's reason on failure. */
 export async function hub<T>(url: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(url, {
     method: init.method ?? 'GET',
@@ -28,7 +44,7 @@ export async function hub<T>(url: string, init: { method?: string; body?: unknow
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error ?? `${init.method ?? 'GET'} ${url} failed (${res.status})`);
+  if (!res.ok) throw new HubError(json.error ?? `${init.method ?? 'GET'} ${url} failed (${res.status})`, res.status, json);
   return json as T;
 }
 
@@ -84,3 +100,11 @@ export const fetchCollector = (slug: string) => hub<CollectorStatus>(`/api/proje
 // Phase 5: check a project's repos now.
 export const refreshRepos = (slug: string) =>
   hub<{ ok: true; repoStatus: (RepoStatus | null)[] }>(`/api/projects/${slug}/repos/refresh`, { method: 'POST', body: {} });
+
+// Toolkit: toolkit.yaml in a project folder. `error` is set when the file can't be read.
+export type { Toolkit, ToolkitStatus };
+export type ToolkitResponse = (Toolkit & { others: string[]; error?: undefined }) | { file: string; error: string };
+export const toolkitOk = (r: ToolkitResponse | undefined): r is Toolkit & { others: string[] } => !!r && 'items' in r;
+export const fetchToolkit = (slug: string) => hub<ToolkitResponse>(`/api/projects/${slug}/toolkit`);
+export const setToolkitStatus = (slug: string, item: { index: number; name: string }, status: ToolkitStatus, version: string) =>
+  hub<Toolkit>(`/api/projects/${slug}/toolkit/items/${item.index}`, { method: 'PUT', body: { name: item.name, status, version } });

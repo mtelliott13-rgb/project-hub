@@ -7,6 +7,7 @@ import { ProjectIdeas } from '../IdeasPage.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
 import { MonetizeSection } from './MonetizeSection.tsx';
 import { RepoSection } from './RepoSection.tsx';
+import { ToolkitSection } from './ToolkitSection.tsx';
 import { NotesSection } from './NotesSection.tsx';
 import { listedSessions, SessionList, type Run } from './parts.tsx';
 
@@ -39,6 +40,7 @@ export const SECTIONS: Section[] = [
     Component: ({ project, run }) => <SessionList sessions={project.sessions} run={run} preview={10} />,
   },
   { id: 'collector', title: () => 'Collector', column: 'main', Component: CollectorSection, show: (p) => p.collector !== null },
+  { id: 'toolkit', title: () => 'Toolkit', column: 'main', Component: ToolkitSection, show: (p) => p.toolkit !== null },
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: RepoSection },
   { id: 'files', title: () => 'Files and links', column: 'main', Component: comingIn(6, 'Recently changed files and saved links') },

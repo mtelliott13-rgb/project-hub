@@ -78,6 +78,7 @@ export function testDeps(db: Db) {
       claudeDesktopInstalled: true,
       probe: { listeners: async (port: number) => listening.get(port) ?? [] },
       repos,
+      toolkitBackupDir: path.join(dir, 'backups/toolkit'),
     },
   };
 }

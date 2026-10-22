@@ -28,6 +28,7 @@ import { ChangeFeed } from './events.ts';
 import { monetizeJobs, runMonetize } from './monetize.ts';
 import { macProbe } from './collector.ts';
 import { ghRunner, repoPoller, repoStatus } from './repos.ts';
+import { TOOLKIT_FILE } from './toolkit.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
@@ -68,11 +69,27 @@ const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'proje
   const error = store.error();
   if (error && error !== lastFileError) logError('Reading projects.yaml')(error);
   lastFileError = error;
+  watchToolkits();
   // A repo just added to projects.yaml is checked now rather than at the next poll.
   for (const p of listAllProjects(db)) for (const dir of p.repos) if (!p.archived && !repos.get(dir)) void repos.refresh(dir);
   feed.notify();
 });
-store.reload();
+// toolkit.yaml in any project folder: edits outside the hub (or a new or
+// deleted file) reach the card and page without a restart.
+const toolkitWatchers = new Map<string, { close: () => void }>();
+function watchToolkits() {
+  const wanted = new Set(
+    listAllProjects(db)
+      .filter((p) => !p.archived)
+      .flatMap((p) => [...p.repos, ...p.folders])
+      .filter((dir) => fs.existsSync(dir))
+      .map((dir) => path.join(dir, TOOLKIT_FILE)),
+  );
+  for (const [file, w] of toolkitWatchers) if (!wanted.has(file)) (w.close(), toolkitWatchers.delete(file));
+  for (const file of wanted) if (!toolkitWatchers.has(file)) toolkitWatchers.set(file, watchFile(file, () => feed.notify()));
+}
+
+store.reload(); // also starts the toolkit.yaml watchers
 watchFile(PROJECTS_FILE, store.reload);
 
 // Phase 4: notes, Monetize drafts and Ideas. Claude Code may tick ideas.md, so watch it too.
@@ -142,6 +159,7 @@ const app = createApp({
   claudeDesktopInstalled: fs.existsSync(CLAUDE_DESKTOP_APP),
   onSessionActivity: refreshTitleSoon,
   repos,
+  toolkitBackupDir: path.join(BACKUP_DIR, 'toolkit'),
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
