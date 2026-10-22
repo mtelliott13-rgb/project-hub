@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font: 13px -apple-system, BlinkMacSystemFont, sans-serif; width: 320px; margin: 12px; color: #1c1917; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      .tab { margin-bottom: 10px; }
+      .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .url { color: #78716c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      select, button { font: inherit; width: 100%; padding: 4px; margin-top: 6px; }
+      button { background: #1c1917; color: white; border: 0; border-radius: 6px; padding: 6px; cursor: pointer; }
+      button:disabled { opacity: 0.4; cursor: default; }
+      .note { color: #78716c; font-size: 12px; margin-top: 8px; }
+      .error { color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <h1>Add this tab to a project</h1>
+    <div class="tab"><div class="title" id="title"></div><div class="url" id="url"></div></div>
+    <select id="project" aria-label="Project"></select>
+    <button id="add" disabled>Add</button>
+    <div class="note" id="note"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

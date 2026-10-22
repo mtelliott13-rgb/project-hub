@@ -1,5 +1,5 @@
-// The Inbox (SPEC.md, Phase 6): links no rule matched and sessions no folder
-// matched. Select one with ↑/↓ (or j/k) and press a project's number to file
+// The Inbox (SPEC.md, Phases 6 and 7): links no rule matched, sessions no
+// folder matched, and claude.ai chats nothing matched. Select one with ↑/↓ (or j/k) and press a project's number to file
 // it; then A saves "always file these here", so the next one files itself.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
@@ -12,7 +12,10 @@ import {
   fetchProjects,
   fetchRules,
   fileLink,
+  fileChat,
   fileSession,
+  mapClaudeProject,
+  type ChatDto,
   type InboxSession,
   type LinkDto,
   type ProjectDto,
@@ -22,11 +25,17 @@ import { Action, ago, shortenHome } from './ui.tsx';
 
 const inputClass = 'rounded-md border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-950';
 
-type Item = { kind: 'link'; at: string; link: LinkDto } | { kind: 'session'; at: string; session: InboxSession };
-const itemKey = (i: Item) => (i.kind === 'link' ? `l${i.link.id}` : `s${i.session.id}`);
+type Item = { kind: 'link'; at: string; link: LinkDto } | { kind: 'session'; at: string; session: InboxSession } | { kind: 'chat'; at: string; chat: ChatDto };
+const itemKey = (i: Item) => (i.kind === 'link' ? `l${i.link.id}` : i.kind === 'session' ? `s${i.session.id}` : `c${i.chat.id}`);
 
 /** What was just filed, so A can save its rule and Z can undo it. */
-type Filed = { kind: 'link'; link: LinkDto; slug: string; choice: number } | { kind: 'session'; session: InboxSession; slug: string };
+type Filed =
+  | { kind: 'link'; link: LinkDto; slug: string; choice: number }
+  | { kind: 'session'; session: InboxSession; slug: string }
+  | { kind: 'chat'; chat: ChatDto; slug: string };
+
+/** Whether A has a rule to save for what was just filed. */
+const canAlways = (f: Filed) => (f.kind === 'session' ? !f.session.folderProblem : f.kind === 'chat' ? !!f.chat.claudeProjectId : true);
 
 export const linkLabel = (l: { title: string | null; url: string }) => l.title ?? l.url.replace(/^https?:\/\/(www\.)?/, '');
 
@@ -77,6 +86,7 @@ export function InboxPage({ run }: { run: Run }) {
   const items: Item[] = [
     ...(inbox.data?.links ?? []).map((link) => ({ kind: 'link' as const, at: link.createdAt, link })),
     ...(inbox.data?.sessions ?? []).map((session) => ({ kind: 'session' as const, at: session.lastActiveAt, session })),
+    ...(inbox.data?.chats ?? []).map((chat) => ({ kind: 'chat' as const, at: chat.lastActiveAt, chat })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   const current = items[Math.min(selected, items.length - 1)];
 
@@ -86,6 +96,7 @@ export function InboxPage({ run }: { run: Run }) {
   const file = useMutation({
     mutationFn: async ({ item, slug }: { item: Item; slug: string }): Promise<Filed> => {
       if (item.kind === 'link') return { kind: 'link', link: (await fileLink(item.link.id, slug)).link, slug, choice: item.link.suggested };
+      if (item.kind === 'chat') return { kind: 'chat', chat: (await fileChat(item.chat.id, slug)).chat, slug };
       await fileSession(item.session.id, slug, false);
       return { kind: 'session', session: item.session, slug };
     },
@@ -104,6 +115,12 @@ export function InboxPage({ run }: { run: Run }) {
         const { filed: n } = await addRule(f.slug, choice);
         return `Saved: links to ${choice.label} now file into ${name(f.slug)}.${n ? ` ${n} more from the Inbox filed.` : ''}`;
       }
+      if (f.kind === 'chat') {
+        // Map its Claude Project, then let that file it (and every other chat in it).
+        await mapClaudeProject(f.chat.claudeProjectId!, f.slug);
+        await fileChat(f.chat.id, null);
+        return `Saved: chats in that Claude Project now file into ${name(f.slug)}. Change it on the Settings page.`;
+      }
       await fileSession(f.session.id, f.slug, true);
       return `Saved: sessions in ${shortenHome(f.session.folder)} now file into ${name(f.slug)} (added to its folders in projects.yaml).`;
     },
@@ -116,7 +133,11 @@ export function InboxPage({ run }: { run: Run }) {
   });
 
   const undo = useMutation({
-    mutationFn: (f: Filed & { kind: 'link' }) => fileLink(f.link.id, null),
+    mutationFn: async (f: Filed) => {
+      if (f.kind === 'link') await fileLink(f.link.id, null);
+      else if (f.kind === 'chat') await fileChat(f.chat.id, null);
+      else throw new Error("A filed session can't be undone here; edit projects.yaml");
+    },
     onSuccess: () => {
       setFiled(null);
       setMessage({ ok: true, text: 'Moved back to the Inbox.' });
@@ -140,8 +161,8 @@ export function InboxPage({ run }: { run: Run }) {
       if (e.key === 'ArrowDown' || e.key === 'j') setSelected((s) => Math.min(s + 1, items.length - 1));
       else if (e.key === 'ArrowUp' || e.key === 'k') setSelected((s) => Math.max(s - 1, 0));
       else if (n && current && active[Number(n) - 1] && !file.isPending) file.mutate({ item: current, slug: active[Number(n) - 1].slug });
-      else if ((e.key === 'a' || e.key === 'A') && filed && !(filed.kind === 'session' && filed.session.folderProblem)) always.mutate(filed);
-      else if ((e.key === 'z' || e.key === 'Z') && filed?.kind === 'link') undo.mutate(filed);
+      else if ((e.key === 'a' || e.key === 'A') && filed && canAlways(filed)) always.mutate(filed);
+      else if ((e.key === 'z' || e.key === 'Z') && filed && filed.kind !== 'session') undo.mutate(filed);
       else if (e.key === 'Escape') setFiled(null);
       else if ((e.key === 'Delete' || e.key === 'Backspace') && current?.kind === 'link') {
         if (confirm(`Delete this link?\n\n${current.link.url}`)) remove.mutate(current.link);
@@ -162,7 +183,8 @@ export function InboxPage({ run }: { run: Run }) {
       <div>
         <h1 className="text-2xl font-semibold">Inbox</h1>
         <p className="mt-1 text-sm text-stone-500">
-          Links no rule matched and Claude Code sessions outside every project's folders. Select one with ↑/↓ (or j/k), press a project's number to file it, then A to
+          Links no rule matched, Claude Code sessions outside every project's folders, and claude.ai chats whose Claude Project isn't mapped and whose title has no
+          project keyword. Select one with ↑/↓ (or j/k), press a project's number to file it, then A to
           always file ones like it there.
         </p>
       </div>
@@ -176,7 +198,7 @@ export function InboxPage({ run }: { run: Run }) {
         ))}
       </div>
 
-      {filed && <FiledBar filed={filed} name={name} setFiled={setFiled} onAlways={() => always.mutate(filed)} onUndo={() => filed.kind === 'link' && undo.mutate(filed)} busy={always.isPending} />}
+      {filed && <FiledBar filed={filed} name={name} setFiled={setFiled} onAlways={() => always.mutate(filed)} onUndo={() => undo.mutate(filed)} busy={always.isPending} />}
       {message && (
         <p data-testid="inbox-message" className={`rounded-md px-3 py-2 text-sm ${message.ok ? 'bg-stone-100 dark:bg-stone-900' : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'}`}>
           {message.text}
@@ -252,7 +274,7 @@ function FiledBar({
   return (
     <div data-testid="filed-bar" className="flex flex-wrap items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-sm dark:bg-green-950">
       <span>
-        Filed {filed.kind === 'link' ? `"${linkLabel(filed.link)}"` : 'the session'} to <b>{name(filed.slug)}</b>.
+        Filed {filed.kind === 'link' ? `"${linkLabel(filed.link)}"` : filed.kind === 'chat' ? `the chat "${filed.chat.title ?? 'Untitled chat'}"` : 'the session'} to <b>{name(filed.slug)}</b>.
       </span>
       {filed.kind === 'link' ? (
         <>
@@ -277,6 +299,23 @@ function FiledBar({
           </button>
           {kbd('Z')}
         </>
+      ) : filed.kind === 'chat' ? (
+        filed.chat.claudeProjectId ? (
+          <>
+            <Action small disabled={busy} onClick={onAlways}>
+              Always file chats in its Claude Project here
+            </Action>
+            {kbd('A')}
+            <button type="button" className="text-xs underline" onClick={onUndo}>
+              Undo
+            </button>
+            {kbd('Z')}
+          </>
+        ) : (
+          <span className="text-xs text-stone-500">
+            It isn't in a Claude Project, so there's no rule to save. Chats started with a project's "New chat in project" button file themselves.
+          </span>
+        )
       ) : filed.session.folderProblem ? (
         <span className="text-xs text-stone-500">Its folder is too broad for a rule, so only this session was filed.</span>
       ) : (
@@ -320,13 +359,18 @@ function InboxRow({
       onClick={onSelect}
       className={`flex items-center gap-2 px-2 py-1.5 text-sm ${selected ? 'bg-stone-100 ring-1 ring-stone-300 dark:bg-stone-800 dark:ring-stone-600' : ''}`}
     >
-      <span className="w-14 shrink-0 text-xs text-stone-500">{item.kind === 'link' ? 'Link' : 'Session'}</span>
+      <span className="w-14 shrink-0 text-xs text-stone-500">{item.kind === 'link' ? 'Link' : item.kind === 'chat' ? 'Chat' : 'Session'}</span>
       {item.kind === 'link' ? (
         <span className="min-w-0 flex-1 truncate">
           <a href={item.link.url} target="_blank" rel="noreferrer" className="hover:underline">
             {linkLabel(item.link)}
           </a>
           {item.link.title && <span className="ml-2 text-xs text-stone-500">{item.link.url.replace(/^https?:\/\/(www\.)?/, '')}</span>}
+        </span>
+      ) : item.kind === 'chat' ? (
+        <span className="min-w-0 flex-1 truncate">
+          {item.chat.title ?? <span className="text-stone-500">Untitled chat</span>}
+          <span className="ml-2 text-xs text-stone-500">{item.chat.claudeProjectId ? 'in an unmapped Claude Project' : 'no Claude Project'}</span>
         </span>
       ) : (
         <span className="min-w-0 flex-1 truncate">
@@ -348,6 +392,10 @@ function InboxRow({
         <button type="button" aria-label={`Delete link ${item.link.url}`} onClick={onDelete} className="shrink-0 text-stone-400 hover:text-red-600">
           ✕
         </button>
+      ) : item.kind === 'chat' ? (
+        <Action small title="Open in the Claude desktop app" onClick={() => run({ kind: 'chat', chatId: item.chat.id })}>
+          Open
+        </Action>
       ) : (
         item.session.resumeProblem === null && (
           <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: item.session.id })}>

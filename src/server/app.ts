@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { eq } from 'drizzle-orm';
+import { desc, eq, isNotNull } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listAllProjects, type Db } from './db/index.ts';
-import { projects, sessions } from './db/schema.ts';
+import { chats, projects, sessions } from './db/schema.ts';
 import {
   collectorDir,
   collectorLaunchSchema,
@@ -18,6 +18,7 @@ import {
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { FileWatcher } from './files.ts';
 import { addLinkRoutes, projectFileFilter } from './link-routes.ts';
+import { addChatRoutes } from './chat-routes.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
@@ -55,6 +56,8 @@ type AppDeps = DocDeps & {
   files: FileWatcher;
   /** Project folders must be inside it (default: your home folder). */
   home?: string;
+  /** The Chrome extension's ID (Phase 7); /ext/* answers only it. */
+  extensionId: string;
 };
 
 /**
@@ -72,7 +75,11 @@ export function hubPageRefusal(c: Context, origins: string[], uiToken: string): 
   }
   const site = c.req.header('Sec-Fetch-Site');
   if (site !== undefined && site !== 'same-origin') return 'requests must come from the hub page (Sec-Fetch-Site)';
-  if ((method === 'POST' || method === 'PUT') && !c.req.header('Content-Type')?.startsWith('application/json')) {
+  // JSON (or, for the export import, a zip): types a plain form can't send, so
+  // a cross-site page can't post here without a preflight the hub never answers.
+  const type = c.req.header('Content-Type') ?? '';
+  const zipOk = c.req.path === '/api/import/claude-export' && type.startsWith('application/zip');
+  if ((method === 'POST' || method === 'PUT') && !type.startsWith('application/json') && !zipOk) {
     return 'requests must be JSON';
   }
   if (!tokenMatches(uiToken, c.req.header('X-Hub-Token'))) return 'bad or missing token';
@@ -116,11 +123,13 @@ export function createApp(deps: AppDeps) {
     const exists = (dir: string) => fs.existsSync(dir);
     // `resumeProblem` says why a session can't be reopened; null means it can.
     const all = sessionsForProjects(db, projects.map((p) => p.slug)).map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }));
+    const filedChats = db.select().from(chats).where(isNotNull(chats.projectSlug)).orderBy(desc(chats.lastActiveAt)).all();
     // `repoStatus` is one entry per repo in `repos`, null until its first check.
     return c.json(
       projects.map((p) => ({
         ...p,
         sessions: all.filter((s) => s.projectSlug === p.slug),
+        chats: filedChats.filter((ch) => ch.projectSlug === p.slug),
         repoStatus: p.repos.map((dir) => repos.get(dir)),
         toolkit: toolkitSummary(p),
       })),
@@ -157,6 +166,7 @@ export function createApp(deps: AppDeps) {
 
   addDocRoutes(app, deps);
   addLinkRoutes(app, deps);
+  addChatRoutes(app, deps);
 
   // The folder picker.
   app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));

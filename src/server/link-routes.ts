@@ -9,6 +9,7 @@ import { projects, sessions } from './db/schema.ts';
 import type { ChangeFeed } from './events.ts';
 import type { FileWatcher } from './files.ts';
 import { checkPaths, FolderError, tooBroad } from './folders.ts';
+import { inboxChats } from './chats.ts';
 import { addLink, addRule, deleteLink, deleteRule, fileLink, inboxLinks, LinkError, listRules, projectLinks, ruleChoices } from './links.ts';
 import { matchProject, worktreeParent } from './matching.ts';
 import type { ProjectStore } from './project-store.ts';
@@ -72,13 +73,14 @@ export function addLinkRoutes(app: Hono, { db, feed, store, files, home = os.hom
     return p ? c.json(projectLinks(db, p.slug)) : c.json({ error: 'Unknown project' }, 404);
   });
 
-  /** Everything waiting to be filed: links no rule matched, and sessions no folder matched. */
+  /** Everything waiting to be filed: links no rule matched, sessions no folder matched, chats nothing matched. */
   app.get('/api/inbox', (c) => {
     const exists = (dir: string) => fs.existsSync(dir);
     const unfiled = db.select().from(sessions).where(isNull(sessions.projectSlug)).orderBy(desc(sessions.lastActiveAt)).all();
     return c.json({
       links: inboxLinks(db).map(withChoices),
       sessions: unfiled.map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists), folder: worktreeParent(s.cwd), folderProblem: tooBroad(worktreeParent(s.cwd), home) })),
+      chats: inboxChats(db),
     });
   });
 

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { fetchFileError, fetchInbox, fetchProjects } from './api.ts';
 import { InboxPage } from './InboxPage.tsx';
+import { SettingsPage } from './SettingsPage.tsx';
 import { IdeasPage } from './IdeasPage.tsx';
 import { launch, type LaunchBody } from './launch.ts';
 import { ProjectCard, type Run } from './ProjectCard.tsx';
@@ -49,9 +50,10 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const here = route(usePath());
   const inbox = useQuery({ queryKey: ['inbox'], queryFn: fetchInbox }).data;
-  const waiting = inbox ? inbox.links.length + inbox.sessions.length : 0;
+  const waiting = inbox ? inbox.links.length + inbox.sessions.length + inbox.chats.length : 0;
   useEffect(() => {
-    document.title = here.page === 'ideas' ? 'Ideas · Project Hub' : here.page === 'inbox' ? 'Inbox · Project Hub' : 'Project Hub';
+    const names = { ideas: 'Ideas', inbox: 'Inbox', settings: 'Settings' } as Record<string, string>;
+    document.title = names[here.page] ? `${names[here.page]} · Project Hub` : 'Project Hub';
   }, [here.page]);
 
   const navClass = (active: boolean) => `text-sm ${active ? 'font-medium' : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100'}`;
@@ -70,6 +72,9 @@ export function App() {
           </Link>
           <Link to="/ideas" className={navClass(here.page === 'ideas')}>
             Ideas
+          </Link>
+          <Link to="/settings" className={navClass(here.page === 'settings')}>
+            Settings
           </Link>
           <span className="flex-1" />
           <Action primary onClick={() => setAdding(true)}>
@@ -94,6 +99,7 @@ export function App() {
         {here.page === 'project' && <ProjectPage slug={here.slug} run={run} />}
         {here.page === 'ideas' && <IdeasPage />}
         {here.page === 'inbox' && <InboxPage run={run} />}
+        {here.page === 'settings' && <SettingsPage />}
         {adding && <ProjectForm onClose={() => setAdding(false)} />}
       </main>
     </div>

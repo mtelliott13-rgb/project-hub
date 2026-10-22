@@ -15,6 +15,9 @@ export const HUB = 'http://127.0.0.1:4747';
 /** Headers for a GET from the hub page: its token (browsers send no Origin on same-origin GETs). */
 export const PAGE_GET = { 'X-Hub-Token': 'ui-t0ken' };
 
+/** A made-up extension ID for tests; requests from it carry Origin chrome-extension://<it>. */
+export const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+
 /**
  * createApp deps with a launcher that records plans instead of running them,
  * a projects.yaml, notes and ideas next to the test database, and a Generate
@@ -90,6 +93,7 @@ export function testDeps(db: Db) {
       repos,
       toolkitBackupDir: path.join(dir, 'backups/toolkit'),
       files,
+      extensionId: EXTENSION_ID,
     },
   };
 }

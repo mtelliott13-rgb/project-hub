@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Project Hub",
+  "version": "0.1.0",
+  "description": "Tells your local Project Hub (127.0.0.1:4747) which claude.ai chat you have open, and adds the current tab to a project.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn6zGXIFOzxs+H6biTTy0EePMEEyp+RL3leWHG2RtFh0rYaolO1cCvdSwzxv5/WT/Olys6YfWY+iCQG+dky7H7nhAb8WtX4uYhdBBVQPZXgezYK2Acu9wMDALxM47Ra16UYhV6xHMPj2DTEKvLh3zAGTUtgfYvaH9JKB9iQ8uQz3+q2l6XiVqrNipkU1I3/yw+iUIBzu0jbCUUGfANvRZtAURv6nJYdZjoRfQrjKl2n94WYxxuejqXcL2SBQ02i/bRzUJYBBvlux/f3zenB9t948KdLHUCLKlNkfsY9BusX0Fib7yUmYv1HlIb8dDSul2DYJXj5ZfQJRTaJNnT+29JwIDAQAB",
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://127.0.0.1:4747/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["chat-page.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_title": "Add this tab to a project", "default_popup": "popup.html" }
+}

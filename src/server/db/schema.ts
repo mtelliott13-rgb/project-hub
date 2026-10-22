@@ -99,3 +99,41 @@ export const links = sqliteTable(
 );
 
 export type Link = typeof links.$inferSelect;
+
+// Phase 7: claude.ai Projects the hub has seen (from the extension or the data
+// export), and which hub project each one's chats file into. projects.yaml's
+// `claude_project` also maps one; a mapping here wins.
+export const claudeProjects = sqliteTable('claude_projects', {
+  // The Claude Project's UUID, lowercase.
+  id: text('id').primaryKey(),
+  // From the data export's projects.json; the extension doesn't know it.
+  name: text('name'),
+  projectSlug: text('project_slug').references(() => projects.slug, { onDelete: 'set null' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+export type ClaudeProject = typeof claudeProjects.$inferSelect;
+
+// claude.ai chats: id, title and Claude Project only. Never message text.
+// Null projectSlug means the Inbox.
+export const chats = sqliteTable(
+  'chats',
+  {
+    // The chat's UUID from claude.ai/chat/<id>, lowercase.
+    id: text('id').primaryKey(),
+    title: text('title'),
+    claudeProjectId: text('claude_project_id'),
+    projectSlug: text('project_slug').references(() => projects.slug),
+    // 'claude-project' (its Claude Project is mapped), 'keyword' (a project
+    // keyword is in its title), 'manual' (filed from the Inbox; never re-filed).
+    filedBy: text('filed_by', { enum: ['claude-project', 'keyword', 'manual'] }),
+    // Where the hub first heard of it: 'extension' or 'export'.
+    source: text('source').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    // When you last had it open in Chrome, or its last update in the export.
+    lastActiveAt: integer('last_active_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('chats_project_idx').on(t.projectSlug, t.lastActiveAt)],
+);
+
+export type Chat = typeof chats.$inferSelect;

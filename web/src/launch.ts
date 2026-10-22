@@ -4,7 +4,7 @@ import { hub } from './api.ts';
 export type LaunchBody =
   | { kind: 'session' | 'desktop'; sessionId: string }
   | { kind: 'new-session' | 'editor' | 'claude-project'; slug: string; path?: string }
-  | { kind: 'chat'; chatId: string }
+  | { kind: 'chat'; chatId: string; in?: 'desktop' | 'browser' }
   | { kind: 'from-pr'; slug: string; pr: number; path?: string }
   | { kind: 'file'; slug: string; path: string }
   | { kind: 'collector-start' | 'collector-stop'; slug: string };

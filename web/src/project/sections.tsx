@@ -4,6 +4,7 @@
 import type { ComponentType } from 'react';
 import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
+import { ChatsSection } from './ChatsSection.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
 import { FilesSection } from './FilesSection.tsx';
 import { LinksSection } from './LinksSection.tsx';
@@ -24,15 +25,6 @@ export type Section = {
   show?: (p: ProjectDto) => boolean;
 };
 
-/** Space kept for what a later phase adds. */
-const comingIn = (phase: number, what: string) =>
-  function ComingSoon() {
-    return (
-      <p className="text-sm text-stone-500">
-        {what} arrive in Phase {phase}.
-      </p>
-    );
-  };
 
 export const SECTIONS: Section[] = [
   {
@@ -46,7 +38,7 @@ export const SECTIONS: Section[] = [
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: RepoSection },
   { id: 'files', title: () => 'Recent files', column: 'main', Component: FilesSection },
-  { id: 'chats', title: () => 'Chats', column: 'main', Component: comingIn(7, 'claude.ai chats for this project') },
+  { id: 'chats', title: (p) => `Chats (${p.chats.length})`, column: 'main', Component: ChatsSection },
   { id: 'links', title: () => 'Links', column: 'side', Component: LinksSection },
   { id: 'notes', title: () => 'Notes', column: 'side', Component: NotesSection },
   { id: 'ideas', title: () => 'Ideas for this project', column: 'side', Component: ProjectIdeas },

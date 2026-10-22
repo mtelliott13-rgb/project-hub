@@ -16,6 +16,7 @@ import {
   updateProject,
   type ProjectInput,
 } from './projects-file.ts';
+import { releaseProjectChats } from './chats.ts';
 import { releaseProjectLinks } from './links.ts';
 import { loadProjects } from './projects.ts';
 import { rematchSessions } from './sessions.ts';
@@ -112,8 +113,8 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
 
     /**
      * Removes the hub's record only: the projects.yaml entry and the database
-     * row. Its sessions and links stay, unfiled (in the Inbox), and its link
-     * rules go. Nothing on disk outside ~/.project-hub
+     * row. Its sessions, links and chats stay, unfiled (in the Inbox); its link
+     * rules go and its Claude Project mappings are cleared. Nothing on disk outside ~/.project-hub
      * is touched.
      */
     remove(slug: string): number {
@@ -122,6 +123,7 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
       const unfiled = db.transaction((tx) => {
         const n = tx.update(sessions).set({ projectSlug: null }).where(eq(sessions.projectSlug, slug)).run().changes;
         releaseProjectLinks(tx, slug);
+        releaseProjectChats(tx, slug);
         tx.delete(projects).where(eq(projects.slug, slug)).run();
         return n;
       });

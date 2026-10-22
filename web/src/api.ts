@@ -1,6 +1,6 @@
 // Talking to the hub. Writes carry the token the hub injected into this page;
 // see hubPageRefusal in src/server/app.ts.
-import type { Link, LinkRule, Project, Session } from '../../src/server/db/schema.ts';
+import type { Chat, Link, LinkRule, Project, Session } from '../../src/server/db/schema.ts';
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
@@ -13,6 +13,8 @@ export type SessionDto = Jsonified<Session> & { resumeProblem: string | null };
 /** `repoStatus` lines up with `repos`; an entry is null until its first check. `toolkit` is null without a toolkit.yaml. */
 export type ProjectDto = Jsonified<Project> & {
   sessions: SessionDto[];
+  /** Its claude.ai chats, newest first. */
+  chats: Jsonified<Chat>[];
   repoStatus: (RepoStatus | null)[];
   toolkit: { file: string; done: number; total: number; error: string | null } | null;
 };
@@ -117,7 +119,7 @@ export type RuleChoice = { host: string; pathPrefix: string; label: string };
 /** A link with the rules "always file these here" can offer for it. */
 export type LinkDto = Jsonified<Link> & { choices: RuleChoice[]; suggested: number };
 export type InboxSession = SessionDto & { folder: string; folderProblem: string | null };
-export type Inbox = { links: LinkDto[]; sessions: InboxSession[] };
+export type Inbox = { links: LinkDto[]; sessions: InboxSession[]; chats: Jsonified<Chat>[] };
 
 export const fetchFiles = (slug: string) => hub<FilesResponse>(`/api/projects/${slug}/files`);
 export const fetchProjectLinks = (slug: string) => hub<Jsonified<Link>[]>(`/api/projects/${slug}/links`);
@@ -133,3 +135,27 @@ export const addRule = (slug: string, choice: RuleChoice) =>
 export const deleteRule = (id: number) => hub<{ ok: true }>(`/api/link-rules/${id}`, { method: 'DELETE' });
 export const fileSession = (id: string, slug: string, always: boolean) =>
   hub<{ ok: true }>(`/api/inbox/sessions/${id}/file`, { method: 'POST', body: { slug, always } });
+
+// Phase 7: claude.ai chats, Claude Project mappings, the data-export import.
+export type ChatDto = Jsonified<Chat>;
+export type ClaudeProjectRow = { id: string; name: string | null; projectSlug: string | null; yamlSlug: string | null; chats: number };
+export type ClaudeProjects = { claudeProjects: ClaudeProjectRow[]; extension: { id: string; lastHeard: { at: string; chatId: string } | null } };
+export type ImportResult = { chats: number; added: number; claudeProjects: number; skipped: number; filed: number; inbox: number };
+
+/** Files a chat by hand, or (null) back to automatic filing. */
+export const fileChat = (id: string, slug: string | null) => hub<{ chat: ChatDto }>(`/api/chats/${id}`, { method: 'PUT', body: { slug } });
+export const fetchClaudeProjects = () => hub<ClaudeProjects>('/api/claude-projects');
+export const mapClaudeProject = (id: string, slug: string | null) =>
+  hub<{ ok: true; moved: number }>(`/api/claude-projects/${id}`, { method: 'PUT', body: { slug } });
+
+/** Uploads the export (.zip as downloaded, or conversations.json). */
+export async function importExport(file: File): Promise<ImportResult> {
+  const res = await fetch('/api/import/claude-export', {
+    method: 'POST',
+    headers: { 'X-Hub-Token': token(), 'Content-Type': /\.zip$/i.test(file.name) ? 'application/zip' : 'application/json' },
+    body: file,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new HubError(json.error ?? `Import failed (${res.status})`, res.status, json);
+  return json as ImportResult;
+}

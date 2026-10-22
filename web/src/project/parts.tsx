@@ -4,23 +4,20 @@ import { useState } from 'react';
 import { archiveProject, type ProjectDto, type SessionDto } from '../api.ts';
 import type { LaunchBody } from '../launch.ts';
 import { ConfirmDelete, ProjectForm } from '../ProjectForm.tsx';
-import { latestReopenable, listed } from '../resume.ts';
+import { listed, resumeTarget } from '../resume.ts';
 import { navigate } from '../router.tsx';
 import { Action, ago, Badge, TextButton } from '../ui.tsx';
 
 export type Run = (body: LaunchBody) => Promise<void>;
 
 
-/**
- * Resume reopens whatever was touched last that can be reopened. Sessions are
- * the only thing the hub knows about until Phase 7 adds chats; then the newer
- * of the two wins.
- */
+/** Resume reopens whatever was touched last: the newest reopenable session, or the newest chat. */
 function resume(p: ProjectDto, run: Run) {
-  const latest = latestReopenable(p.sessions);
-  if (!latest) return;
-  if (latest.state === 'running' && !confirm('That session is still running. Open a second copy of it anyway?')) return;
-  void run({ kind: 'session', sessionId: latest.id });
+  const target = resumeTarget(p.sessions, p.chats);
+  if (!target) return;
+  if (target.kind === 'chat') return void run({ kind: 'chat', chatId: target.chat.id });
+  if (target.session.state === 'running' && !confirm('That session is still running. Open a second copy of it anyway?')) return;
+  void run({ kind: 'session', sessionId: target.session.id });
 }
 
 export function StatusBadge({ project: p }: { project: ProjectDto }) {
@@ -33,14 +30,20 @@ export function StatusBadge({ project: p }: { project: ProjectDto }) {
 
 /** Resume, New session here, Open in VS Code, New chat in project. */
 export function ProjectActions({ project: p, run }: { project: ProjectDto; run: Run }) {
-  const latest = latestReopenable(p.sessions);
-  const why = p.sessions.length ? 'None of its sessions can be reopened' : 'No sessions yet';
+  const target = resumeTarget(p.sessions, p.chats);
+  const why = p.sessions.length ? 'None of its sessions can be reopened' : 'No sessions or chats yet';
   return (
     <div className="flex flex-wrap gap-2">
       <Action
         primary
-        disabled={!latest}
-        title={latest ? `Reopen "${latest.title ?? 'Untitled session'}" in Terminal` : why}
+        disabled={!target}
+        title={
+          !target
+            ? why
+            : target.kind === 'chat'
+              ? `Reopen the chat "${target.chat.title ?? 'Untitled chat'}" in the Claude app`
+              : `Reopen "${target.session.title ?? 'Untitled session'}" in Terminal`
+        }
         onClick={() => resume(p, run)}
       >
         Resume

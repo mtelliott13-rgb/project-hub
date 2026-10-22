@@ -6,6 +6,7 @@ import { createApp } from './app.ts';
 import { listAllSessions, runningAgents, sessionInfo } from './claude-code.ts';
 import {
   BACKUP_DIR,
+  extensionId,
   CLAUDE_DESKTOP_APP,
   DB_FILE,
   HOST,
@@ -31,6 +32,7 @@ import { ghRunner, repoPoller, repoStatus } from './repos.ts';
 import { TOOLKIT_FILE } from './toolkit.ts';
 import { fileWatcher } from './files.ts';
 import { fileInbox } from './links.ts';
+import { refileChats } from './chats.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
@@ -88,6 +90,8 @@ const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'proje
   files.sync();
   // A project's new GitHub repo or Claude Project may now match links in the Inbox.
   fileInbox(db, listAllProjects(db));
+  // Keywords and claude_project links may have changed: re-file chats not filed by hand.
+  refileChats(db, listAllProjects(db));
   // A repo just added to projects.yaml is checked now rather than at the next poll.
   for (const p of listAllProjects(db)) for (const dir of p.repos) if (!p.archived && !repos.get(dir)) void repos.refresh(dir);
   feed.notify();
@@ -179,6 +183,7 @@ const app = createApp({
   repos,
   toolkitBackupDir: path.join(BACKUP_DIR, 'toolkit'),
   files,
+  extensionId: extensionId(),
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);

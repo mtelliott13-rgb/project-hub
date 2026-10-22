@@ -10,7 +10,7 @@ import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { listAllProjects, openDb } from '../src/server/db/index.ts';
 import { sessions } from '../src/server/db/schema.ts';
 import { applyHookEvent, resumeProblem, syncFromSdk } from '../src/server/sessions.ts';
-import { latestReopenable, listed } from '../web/src/resume.ts';
+import { latestReopenable, listed, resumeTarget } from '../web/src/resume.ts';
 import { HUB, PAGE_GET, testDeps } from './helpers.ts';
 
 const SAVED = '0b5c6a0e-1f2d-4c3b-9a8e-7d6c5b4a3f21';
@@ -107,5 +107,15 @@ describe('which sessions can be reopened', () => {
     expect(t.launched).toEqual([]);
     expect((await launch(SAVED)).status).toBe(200);
     expect(t.launched).toMatchObject([{ argv: ['claude', '--resume', SAVED] }]);
+  });
+});
+
+describe('Resume with chats (Phase 7)', () => {
+  const s = (lastActiveAt: string, resumeProblem: string | null = null) => ({ id: lastActiveAt, lastActiveAt, resumeProblem, state: 'ended' });
+  it('opens whichever was touched last: the newest reopenable session or the newest chat', () => {
+    expect(resumeTarget([s('2026-10-02')], [{ lastActiveAt: '2026-10-03' }])).toMatchObject({ kind: 'chat' });
+    expect(resumeTarget([s('2026-10-04')], [{ lastActiveAt: '2026-10-03' }])).toMatchObject({ kind: 'session' });
+    expect(resumeTarget([s('2026-10-05', 'gone'), s('2026-10-01')], [{ lastActiveAt: '2026-10-03' }])).toMatchObject({ kind: 'chat' });
+    expect(resumeTarget([], [])).toBeNull();
   });
 });
