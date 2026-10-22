@@ -36,6 +36,13 @@
       "when": 1792608796221,
       "tag": "0004_lethal_crystal",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792703355903,
+      "tag": "0005_solid_rocket_raccoon",
+      "breakpoints": true
     }
   ]
 }

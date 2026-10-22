@@ -1,6 +1,6 @@
 // Talking to the hub. Writes carry the token the hub injected into this page;
 // see hubPageRefusal in src/server/app.ts.
-import type { Project, Session } from '../../src/server/db/schema.ts';
+import type { Link, LinkRule, Project, Session } from '../../src/server/db/schema.ts';
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
@@ -108,3 +108,28 @@ export const toolkitOk = (r: ToolkitResponse | undefined): r is Toolkit & { othe
 export const fetchToolkit = (slug: string) => hub<ToolkitResponse>(`/api/projects/${slug}/toolkit`);
 export const setToolkitStatus = (slug: string, item: { index: number; name: string }, status: ToolkitStatus, version: string) =>
   hub<Toolkit>(`/api/projects/${slug}/toolkit/items/${item.index}`, { method: 'PUT', body: { name: item.name, status, version } });
+
+// Phase 6: recent files, links, link rules and the Inbox.
+export type { Link, LinkRule };
+export type RecentFile = { path: string; root: string; rel: string; mtime: string };
+export type FilesResponse = { files: RecentFile[]; watching: { dir: string; ready: boolean; error: string | null }[]; missing: string[] };
+export type RuleChoice = { host: string; pathPrefix: string; label: string };
+/** A link with the rules "always file these here" can offer for it. */
+export type LinkDto = Jsonified<Link> & { choices: RuleChoice[]; suggested: number };
+export type InboxSession = SessionDto & { folder: string; folderProblem: string | null };
+export type Inbox = { links: LinkDto[]; sessions: InboxSession[] };
+
+export const fetchFiles = (slug: string) => hub<FilesResponse>(`/api/projects/${slug}/files`);
+export const fetchProjectLinks = (slug: string) => hub<Jsonified<Link>[]>(`/api/projects/${slug}/links`);
+export const fetchInbox = () => hub<Inbox>('/api/inbox');
+export const addLink = (input: { url: string; title?: string; slug?: string }) =>
+  hub<{ link: LinkDto; existed: boolean }>('/api/links', { method: 'POST', body: input });
+/** Files a link into a project, or back into the Inbox with null. */
+export const fileLink = (id: number, slug: string | null) => hub<{ link: LinkDto }>(`/api/links/${id}`, { method: 'PUT', body: { slug } });
+export const deleteLink = (id: number) => hub<{ ok: true }>(`/api/links/${id}`, { method: 'DELETE' });
+export const fetchRules = () => hub<Jsonified<LinkRule>[]>('/api/link-rules');
+export const addRule = (slug: string, choice: RuleChoice) =>
+  hub<{ rule: Jsonified<LinkRule>; filed: number }>('/api/link-rules', { method: 'POST', body: { slug, host: choice.host, pathPrefix: choice.pathPrefix } });
+export const deleteRule = (id: number) => hub<{ ok: true }>(`/api/link-rules/${id}`, { method: 'DELETE' });
+export const fileSession = (id: string, slug: string, always: boolean) =>
+  hub<{ ok: true }>(`/api/inbox/sessions/${id}/file`, { method: 'POST', body: { slug, always } });

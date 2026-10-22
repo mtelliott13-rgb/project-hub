@@ -16,6 +16,8 @@ import {
   type ProcessProbe,
 } from './collector.ts';
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
+import type { FileWatcher } from './files.ts';
+import { addLinkRoutes, projectFileFilter } from './link-routes.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
@@ -49,6 +51,10 @@ type AppDeps = DocDeps & {
   repos: RepoPoller;
   /** Where toolkit.yaml files are backed up before the hub first writes to them. */
   toolkitBackupDir: string;
+  /** Recently changed files in project folders (Phase 6). */
+  files: FileWatcher;
+  /** Project folders must be inside it (default: your home folder). */
+  home?: string;
 };
 
 /**
@@ -74,7 +80,7 @@ export function hubPageRefusal(c: Context, origins: string[], uiToken: string): 
 }
 
 export function createApp(deps: AppDeps) {
-  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity, repos, toolkitBackupDir } = deps;
+  const { db, webDir, token, feed, uiToken, origins, launcher, claudeDesktopInstalled, store, probe, fetcher, onSessionActivity, repos, toolkitBackupDir, files } = deps;
   // toolkit.yaml files already backed up during this run.
   const toolkitBackedUp = new Set<string>();
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
@@ -150,6 +156,7 @@ export function createApp(deps: AppDeps) {
   app.delete('/api/projects/:slug', (c) => projectWrite(c, () => ({ unfiledSessions: store.remove(c.req.param('slug')) })));
 
   addDocRoutes(app, deps);
+  addLinkRoutes(app, deps);
 
   // The folder picker.
   app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));
@@ -164,7 +171,8 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/events', (c) =>
     streamSSE(c, async (stream) => {
-      const send = () => void stream.writeSSE({ event: 'change', data: '' });
+      // `data` names what changed ('files', or 'all'), so pages refetch only that.
+      const send = (topic: string) => void stream.writeSSE({ event: 'change', data: topic });
       feed.on('change', send);
       stream.onAbort(() => {
         feed.off('change', send);
@@ -209,6 +217,7 @@ export function createApp(deps: AppDeps) {
           project: projectRow,
           claudeDesktopInstalled,
           exists: (p) => fs.existsSync(p),
+          recentFile: (slug, file) => files.recent((f) => f === file && projectFileFilter(db, slug)(f), 1).length === 1,
         });
       }
       const command = describePlan(plan);

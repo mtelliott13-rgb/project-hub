@@ -85,3 +85,14 @@ export function checkPaths(paths: string[], kind: 'repos' | 'folders', alreadyLi
     if (kind === 'repos' && !isRepo(p)) throw new FolderError(`Not a git repo (no .git): ${p}. Add it under Folders instead.`);
   }
 }
+
+// Folders that hold everything else; "always file sessions from here" would sweep them all in.
+const BROAD = ['Documents', 'Desktop', 'Downloads', 'Library', 'Movies', 'Music', 'Pictures', 'Public', 'Applications', 'Library/Mobile Documents', 'Library/CloudStorage'];
+
+/** Why a folder is too broad to become a project folder, or null. */
+export function tooBroad(dir: string, home = HOME): string | null {
+  const p = path.resolve(dir);
+  if (p === home || home.startsWith(p + path.sep) || p === path.parse(p).root) return `${p} holds your whole home folder`;
+  if (BROAD.some((b) => p === path.join(home, b))) return `${p} is too broad: it holds the files of many projects`;
+  return null;
+}

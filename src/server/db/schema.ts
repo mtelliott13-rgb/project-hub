@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { CollectorConfig } from '../projects.ts';
 
 // Identity and match rules for each project. projects.yaml is the source of
@@ -54,3 +54,48 @@ export const sessions = sqliteTable(
 );
 
 export type Session = typeof sessions.$inferSelect;
+
+// Phase 6: "always file these here". A link whose host is `host` (or a
+// subdomain of it) and whose path starts with `pathPrefix` (whole segments)
+// files itself into `projectSlug`. The most specific rule wins.
+export const linkRules = sqliteTable(
+  'link_rules',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    projectSlug: text('project_slug')
+      .notNull()
+      .references(() => projects.slug, { onDelete: 'cascade' }),
+    // Lowercase, without a leading www.
+    host: text('host').notNull(),
+    // '' for the whole domain, else e.g. /document/d (lowercase, no trailing slash).
+    pathPrefix: text('path_prefix').notNull().default(''),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [uniqueIndex('link_rules_host_path_idx').on(t.host, t.pathPrefix)],
+);
+
+export type LinkRule = typeof linkRules.$inferSelect;
+
+// Docs and web links (Phase 6). Null projectSlug means the Inbox.
+export const links = sqliteTable(
+  'links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    url: text('url').notNull(),
+    // The URL without its #fragment, host lowercased and www. dropped, so the same page is stored once.
+    key: text('key').notNull().unique(),
+    title: text('title'),
+    projectSlug: text('project_slug').references(() => projects.slug),
+    // How it was filed: 'rule' (a saved rule), 'github' or 'claude-project' (the
+    // project's own entries in projects.yaml), 'manual'; null in the Inbox.
+    filedBy: text('filed_by', { enum: ['rule', 'github', 'claude-project', 'manual'] }),
+    ruleId: integer('rule_id').references(() => linkRules.id, { onDelete: 'set null' }),
+    // 'paste' (the hub page); Phase 7's extension adds its own.
+    source: text('source').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('links_project_idx').on(t.projectSlug, t.createdAt)],
+);
+
+export type Link = typeof links.$inferSelect;

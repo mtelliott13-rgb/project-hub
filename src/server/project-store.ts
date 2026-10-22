@@ -6,7 +6,9 @@ import { eq } from 'drizzle-orm';
 import { listAllProjects, syncProjects, type Db } from './db/index.ts';
 import { projects, sessions, type Project } from './db/schema.ts';
 import {
+  addFolder,
   addProject,
+  pinSession,
   ProjectsFileError,
   removeProject,
   setArchived,
@@ -14,6 +16,7 @@ import {
   updateProject,
   type ProjectInput,
 } from './projects-file.ts';
+import { releaseProjectLinks } from './links.ts';
 import { loadProjects } from './projects.ts';
 import { rematchSessions } from './sessions.ts';
 
@@ -95,9 +98,22 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
       );
     },
 
+    /** Files one session into this project (`sessions:` in projects.yaml), whatever its folder. */
+    pinSession(slug: string, sessionId: string) {
+      find(slug);
+      save((text) => pinSession(text, slug, sessionId));
+    },
+
+    /** Adds a folder to the project, so sessions run there (and its files) file here. */
+    addFolder(slug: string, folder: string) {
+      find(slug);
+      save((text) => addFolder(text, slug, folder));
+    },
+
     /**
      * Removes the hub's record only: the projects.yaml entry and the database
-     * row. Its sessions stay, unfiled. Nothing on disk outside ~/.project-hub
+     * row. Its sessions and links stay, unfiled (in the Inbox), and its link
+     * rules go. Nothing on disk outside ~/.project-hub
      * is touched.
      */
     remove(slug: string): number {
@@ -105,6 +121,7 @@ export function createProjectStore(db: Db, file: string, backupFile: string, onC
       save((text) => removeProject(text, slug));
       const unfiled = db.transaction((tx) => {
         const n = tx.update(sessions).set({ projectSlug: null }).where(eq(sessions.projectSlug, slug)).run().changes;
+        releaseProjectLinks(tx, slug);
         tx.delete(projects).where(eq(projects.slug, slug)).run();
         return n;
       });

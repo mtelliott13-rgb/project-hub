@@ -5,6 +5,8 @@ import type { ComponentType } from 'react';
 import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
+import { FilesSection } from './FilesSection.tsx';
+import { LinksSection } from './LinksSection.tsx';
 import { MonetizeSection } from './MonetizeSection.tsx';
 import { RepoSection } from './RepoSection.tsx';
 import { ToolkitSection } from './ToolkitSection.tsx';
@@ -43,8 +45,9 @@ export const SECTIONS: Section[] = [
   { id: 'toolkit', title: () => 'Toolkit', column: 'main', Component: ToolkitSection, show: (p) => p.toolkit !== null },
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: RepoSection },
-  { id: 'files', title: () => 'Files and links', column: 'main', Component: comingIn(6, 'Recently changed files and saved links') },
+  { id: 'files', title: () => 'Recent files', column: 'main', Component: FilesSection },
   { id: 'chats', title: () => 'Chats', column: 'main', Component: comingIn(7, 'claude.ai chats for this project') },
+  { id: 'links', title: () => 'Links', column: 'side', Component: LinksSection },
   { id: 'notes', title: () => 'Notes', column: 'side', Component: NotesSection },
   { id: 'ideas', title: () => 'Ideas for this project', column: 'side', Component: ProjectIdeas },
 ];

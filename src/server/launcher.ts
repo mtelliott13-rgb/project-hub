@@ -25,6 +25,7 @@ export const launchRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('claude-project'), slug, in: z.enum(['desktop', 'browser']).optional(), dryRun }),
   z.object({ kind: z.literal('editor'), slug, path: z.string().optional(), dryRun }),
   z.object({ kind: z.literal('from-pr'), slug, pr: z.number().int().positive(), path: z.string().optional(), dryRun }),
+  z.object({ kind: z.literal('file'), slug, path: z.string().min(1), dryRun }),
 ]);
 
 export type LaunchRequest = z.infer<typeof launchRequestSchema>;
@@ -54,6 +55,8 @@ export type LaunchLookup = {
   /** Chats open in the Claude desktop app unless the request says otherwise. */
   claudeDesktopInstalled: boolean;
   exists: (p: string) => boolean;
+  /** Whether `file` is in the project's recently changed files (the only files the page can open). */
+  recentFile?: (slug: string, file: string) => boolean;
 };
 
 const PROJECT_URL = /^https:\/\/claude\.ai\/project\/([0-9a-f-]{36})\/?$/i;
@@ -123,6 +126,13 @@ export function planLaunch(req: LaunchRequest, look: LaunchLookup): LaunchPlan {
     case 'from-pr': {
       const repo = pick(project(req.slug).repos, req.path, 'repos');
       return { via: 'terminal', cwd: repo, argv: ['claude', '--from-pr', String(req.pr)] };
+    }
+    case 'file': {
+      project(req.slug);
+      if (!look.recentFile?.(req.slug, req.path)) throw new LaunchError(400, `${req.path} is not one of this project's recent files`);
+      if (!look.exists(req.path)) throw new LaunchError(409, `File no longer exists: ${req.path}`);
+      // Always the editor, never the file's default app (which could run it).
+      return { via: 'open', argv: ['open', '-a', EDITOR_APP, req.path] };
     }
   }
 }

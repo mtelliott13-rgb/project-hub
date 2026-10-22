@@ -163,3 +163,28 @@ export function removeProject(text: string, slug: string): string {
   if (i === 0 && isMap(next)) next.spaceBefore = (removed as YAMLMap).spaceBefore;
   return verified(toText(doc), slug, null);
 }
+
+/** Adds `value` to the project's `key:` list (sessions or folders), creating the list if needed. */
+function appendToList(text: string, slug: string, key: 'sessions' | 'folders', value: string, readBack: (p: ProjectConfig) => string[]): string {
+  const { doc, seq } = load(text);
+  const map = seq.items[indexOf(seq, slug)];
+  if (!isMap(map)) throw new ProjectsFileError(`${slug} is not in projects.yaml`);
+  const before = parseProjects(text).find((p) => p.slug === slug)!;
+  if (readBack(before).includes(key === 'folders' ? path.resolve(value) : value)) return text;
+  const list = map.get(key, true);
+  if (isSeq(list)) list.add(doc.createNode(key === 'folders' ? collapseHome(value) : value));
+  else map.set(key, flow(doc, [key === 'folders' ? collapseHome(value) : value]));
+  const out = toText(doc);
+  const after = parseProjects(out).find((p) => p.slug === slug);
+  const want = [...readBack(before), key === 'folders' ? path.resolve(value) : value];
+  if (JSON.stringify(after && readBack(after)) !== JSON.stringify(want)) {
+    throw new ProjectsFileError(`Refusing to save: ${slug}.${key} would not read back as intended`);
+  }
+  return out;
+}
+
+/** Pins a session to a project (`sessions:`), whatever folder it ran in. */
+export const pinSession = (text: string, slug: string, sessionId: string) => appendToList(text, slug, 'sessions', sessionId, (p) => p.sessions);
+
+/** Adds a folder to a project, so every session (and file) under it is filed there. */
+export const addFolder = (text: string, slug: string, folder: string) => appendToList(text, slug, 'folders', folder, (p) => p.folders);

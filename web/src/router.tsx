@@ -1,4 +1,4 @@
-// A tiny router: /, /p/<slug> and /ideas. The hub serves index.html for every
+// A tiny router: /, /p/<slug>, /ideas and /inbox. The hub serves index.html for every
 // page path, so these URLs can be bookmarked and reloaded.
 import { useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 
@@ -15,12 +15,13 @@ export function navigate(to: string) {
   scrollTo(0, 0);
 }
 
-export type Route = { page: 'home' } | { page: 'project'; slug: string } | { page: 'ideas' };
+export type Route = { page: 'home' } | { page: 'project'; slug: string } | { page: 'ideas' } | { page: 'inbox' };
 
 export function route(path: string): Route {
   const project = path.match(/^\/p\/([a-z0-9-]+)\/?$/);
   if (project) return { page: 'project', slug: project[1] };
   if (/^\/ideas\/?$/.test(path)) return { page: 'ideas' };
+  if (/^\/inbox\/?$/.test(path)) return { page: 'inbox' };
   return { page: 'home' };
 }
 

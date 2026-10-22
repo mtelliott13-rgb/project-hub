@@ -29,6 +29,8 @@ import { monetizeJobs, runMonetize } from './monetize.ts';
 import { macProbe } from './collector.ts';
 import { ghRunner, repoPoller, repoStatus } from './repos.ts';
 import { TOOLKIT_FILE } from './toolkit.ts';
+import { fileWatcher } from './files.ts';
+import { fileInbox } from './links.ts';
 import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
@@ -63,6 +65,19 @@ const repos = repoPoller({
   onChange: () => feed.notify(),
 });
 
+// Phase 6: recently changed files in every active project's repos and folders.
+const files = fileWatcher({
+  roots: () =>
+    [...new Map(
+      listAllProjects(db)
+        .filter((p) => !p.archived)
+        .flatMap((p) => [...p.repos.map((dir) => ({ dir, repo: true })), ...p.folders.map((dir) => ({ dir, repo: fs.existsSync(path.join(dir, '.git')) }))])
+        .filter((r) => fs.existsSync(r.dir))
+        .map((r) => [r.dir, r]),
+    ).values()],
+  onChange: () => feed.notify('files'),
+});
+
 // projects.yaml is read now and again whenever it changes, by hand or from the page.
 let lastFileError: string | null = null;
 const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'projects.last.yaml'), () => {
@@ -70,6 +85,9 @@ const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'proje
   if (error && error !== lastFileError) logError('Reading projects.yaml')(error);
   lastFileError = error;
   watchToolkits();
+  files.sync();
+  // A project's new GitHub repo or Claude Project may now match links in the Inbox.
+  fileInbox(db, listAllProjects(db));
   // A repo just added to projects.yaml is checked now rather than at the next poll.
   for (const p of listAllProjects(db)) for (const dir of p.repos) if (!p.archived && !repos.get(dir)) void repos.refresh(dir);
   feed.notify();
@@ -160,6 +178,7 @@ const app = createApp({
   onSessionActivity: refreshTitleSoon,
   repos,
   toolkitBackupDir: path.join(BACKUP_DIR, 'toolkit'),
+  files,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
@@ -168,5 +187,7 @@ serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   setInterval(() => refreshFromSdk().catch(logError('Title refresh')), TITLE_REFRESH_MS);
   setInterval(() => refreshRunning().catch(logError('claude agents')), AGENTS_POLL_MS);
   repos.refreshAll().catch(logError('Repo check'));
+  // A project folder created after projects.yaml named it starts being watched within a minute.
+  setInterval(files.sync, 60_000);
   setInterval(() => repos.refreshAll().catch(logError('Repo check')), REPO_POLL_MS);
 });

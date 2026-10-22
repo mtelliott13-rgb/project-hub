@@ -7,6 +7,7 @@ import { createProjectStore } from '../src/server/project-store.ts';
 import { projectDocs } from '../src/server/docs.ts';
 import { monetizeJobs, type MonetizeResult } from '../src/server/monetize.ts';
 import { repoPoller, type RepoStatus } from '../src/server/repos.ts';
+import { fileWatcher, type WatchedRoot } from '../src/server/files.ts';
 
 /** The hub's own origin in tests; requests go to full URLs so the Host check sees it. */
 export const HUB = 'http://127.0.0.1:4747';
@@ -36,6 +37,10 @@ export function testDeps(db: Db) {
     },
     onChange: () => {},
   });
+  // Recent files: nothing is watched until a test sets roots and calls files.sync().
+  let fileRoots: WatchedRoot[] = [];
+  const fileChanges: number[] = [];
+  const files = fileWatcher({ roots: () => fileRoots, onChange: () => fileChanges.push(Date.now()), debounceMs: 50, log: () => {} });
   const dir = path.dirname(db.$client.name);
   const projectsFile = path.join(dir, 'projects.yaml');
   const store = createProjectStore(db, projectsFile, path.join(dir, 'backups/projects.last.yaml'), () => {});
@@ -59,6 +64,11 @@ export function testDeps(db: Db) {
     setRepoDirs: (dirs: string[]) => {
       repoDirs = dirs;
     },
+    files,
+    fileChanges,
+    setFileRoots: (roots: WatchedRoot[]) => {
+      fileRoots = roots;
+    },
     projectsFile,
     store,
     docs,
@@ -79,6 +89,7 @@ export function testDeps(db: Db) {
       probe: { listeners: async (port: number) => listening.get(port) ?? [] },
       repos,
       toolkitBackupDir: path.join(dir, 'backups/toolkit'),
+      files,
     },
   };
 }

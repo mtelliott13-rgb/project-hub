@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { fetchFileError, fetchProjects } from './api.ts';
+import { fetchFileError, fetchInbox, fetchProjects } from './api.ts';
+import { InboxPage } from './InboxPage.tsx';
 import { IdeasPage } from './IdeasPage.tsx';
 import { launch, type LaunchBody } from './launch.ts';
 import { ProjectCard, type Run } from './ProjectCard.tsx';
@@ -17,8 +18,12 @@ function useLiveUpdates() {
   const queryClient = useQueryClient();
   useEffect(() => {
     const source = new EventSource('/api/events');
-    source.addEventListener('change', () => {
-      void queryClient.invalidateQueries({ predicate: (q) => !EDITED_TEXT.has(String(q.queryKey[0])) });
+    // 'files' changes only the recent-files lists; anything else may change everything.
+    source.addEventListener('change', (e) => {
+      const topic = (e as MessageEvent<string>).data;
+      void queryClient.invalidateQueries({
+        predicate: (q) => (topic === 'files' ? q.queryKey[0] === 'files' : !EDITED_TEXT.has(String(q.queryKey[0]))),
+      });
     });
     return () => source.close();
   }, [queryClient]);
@@ -43,8 +48,10 @@ export function App() {
   const { status, run } = useLauncher();
   const [adding, setAdding] = useState(false);
   const here = route(usePath());
+  const inbox = useQuery({ queryKey: ['inbox'], queryFn: fetchInbox }).data;
+  const waiting = inbox ? inbox.links.length + inbox.sessions.length : 0;
   useEffect(() => {
-    document.title = here.page === 'ideas' ? 'Ideas · Project Hub' : 'Project Hub';
+    document.title = here.page === 'ideas' ? 'Ideas · Project Hub' : here.page === 'inbox' ? 'Inbox · Project Hub' : 'Project Hub';
   }, [here.page]);
 
   const navClass = (active: boolean) => `text-sm ${active ? 'font-medium' : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100'}`;
@@ -57,6 +64,9 @@ export function App() {
           </Link>
           <Link to="/" className={navClass(here.page === 'home')}>
             Projects
+          </Link>
+          <Link to="/inbox" className={navClass(here.page === 'inbox')}>
+            Inbox{waiting > 0 && <span data-testid="inbox-count"> ({waiting})</span>}
           </Link>
           <Link to="/ideas" className={navClass(here.page === 'ideas')}>
             Ideas
@@ -83,6 +93,7 @@ export function App() {
         {here.page === 'home' && <Home run={run} />}
         {here.page === 'project' && <ProjectPage slug={here.slug} run={run} />}
         {here.page === 'ideas' && <IdeasPage />}
+        {here.page === 'inbox' && <InboxPage run={run} />}
         {adding && <ProjectForm onClose={() => setAdding(false)} />}
       </main>
     </div>
