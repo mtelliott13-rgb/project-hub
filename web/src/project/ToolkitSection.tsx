@@ -41,6 +41,11 @@ function Row({ item, showCategory, onChange, busy }: { item: Item; showCategory:
           )}
         </div>
         {item.why && <p className="text-sm text-stone-600 dark:text-stone-400">{item.why}</p>}
+        {item.notes && (
+          <p data-testid="toolkit-notes" className="text-xs whitespace-pre-line text-stone-500">
+            {item.notes}
+          </p>
+        )}
         {!item.url && item.urlText && <p className="font-mono text-xs break-all text-stone-500">{item.urlText}</p>}
       </div>
       <select

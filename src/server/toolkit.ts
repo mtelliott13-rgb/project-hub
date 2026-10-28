@@ -11,6 +11,8 @@
 //       why: Fluency with the terminal most finance teams use
 //       target: 2026-11-15      # optional, YYYY-MM-DD
 //       status: in progress     # not started | in progress | done | parked
+//       notes: >-               # optional, shown under `why`
+//         Free through the campus Bloomberg lab.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +36,7 @@ export type ToolkitItem = {
   status: ToolkitStatus;
   /** The value in the file when it isn't one of STATUSES (it then counts as not done). */
   unknownStatus: string | null;
+  notes: string | null;
 };
 
 export type Toolkit = {
@@ -106,6 +109,7 @@ export function parseToolkit(text: string, file: string): Toolkit {
       target: str(it.target), // shown as written; the page flags YYYY-MM-DD dates that have passed
       status: known ? (s as ToolkitStatus) : 'not started',
       unknownStatus: known ? null : str(it.status),
+      notes: str(it.notes),
     });
   });
   const counted = items.filter((i) => i.status !== 'parked');

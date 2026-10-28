@@ -31,6 +31,9 @@ items:
     cost: "$1,250 + $350 enrollment"
     why: The credential most asset managers ask for
     status: 'not started'
+    notes: >-
+      Eligible from June 2025 (23 months before graduation).
+      Re-check the fee before registering.
 
   - name: Excel shortcuts course
     category: Software
@@ -79,10 +82,17 @@ describe('reading toolkit.yaml', () => {
       target: '2026-11-15',
       status: 'in progress',
       unknownStatus: null,
+      notes: 'keep my login in 1Password',
     });
     expect(t.items[1]).toMatchObject({ name: 'CFA Level I', cost: '$1,250 + $350 enrollment', status: 'not started' });
     expect(t.items[2].status).toBe('not started');
     expect(t.items[3].cost).toBe('0');
+  });
+
+  it('reads notes, joining a folded block into one paragraph', () => {
+    expect(t.items[1].notes).toBe('Eligible from June 2025 (23 months before graduation). Re-check the fee before registering.');
+    expect(t.items[4].notes).toBeNull();
+    expect(parseToolkit('items:\n  - name: A\n    notes: "Confirmed free (\\"FREE\\")."\n', 'f').items[0].notes).toBe('Confirmed free ("FREE").');
   });
 
   it('links only http and https', () => {
@@ -131,6 +141,7 @@ describe('writing one status', () => {
   });
 
   it('keeps the quote style the file used', () => {
+    // CFA Level I also has a multi-line notes block after its status; it stays as is.
     expect(changed(FILE, setToolkitStatus(FILE, 1, 'CFA Level I', 'in progress'))).toEqual([["    status: 'not started'", "    status: 'in progress'"]]);
     const dq = 'items:\n  - name: A\n    status: "done"\n';
     expect(setToolkitStatus(dq, 0, 'A', 'parked')).toBe('items:\n  - name: A\n    status: "parked"\n');
