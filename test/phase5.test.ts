@@ -179,6 +179,11 @@ describe('GitHub', () => {
       throw new Error('gh: not logged in');
     });
     expect(failing).toMatchObject({ github: null, githubError: 'gh: not logged in', git: { branch: 'main' } });
+
+    expect((await repoStatus(work, async () => '[]')).github).toMatchObject({ ci: null, workflows: false });
+    fs.mkdirSync(path.join(work, '.github/workflows'), { recursive: true });
+    fs.writeFileSync(path.join(work, '.github/workflows/ci.yml'), 'name: CI\n');
+    expect((await repoStatus(work, async () => '[]')).github).toMatchObject({ ci: null, workflows: true });
   });
 });
 
@@ -232,7 +237,10 @@ describe('following a CI run', () => {
     expect(awaitingCi(status({ state: 'passing', sha: 'h1' }))).toBe(true); // pushed h2, newest run is for h1
     expect(awaitingCi(status({ state: 'passing', sha: 'h2' }))).toBe(false);
     expect(awaitingCi(status({ state: 'failing', sha: 'h1' }, 'h2', 1))).toBe(false); // h2 not pushed yet
-    expect(awaitingCi(status(null))).toBe(false); // no workflow
+    expect(awaitingCi(status(null))).toBe(false); // no runs and no workflow files
+    const first = status(null);
+    first.github!.workflows = true;
+    expect(awaitingCi(first)).toBe(true); // workflow files, but GitHub hasn't listed the first run yet
   });
 
   it('rechecks a repo quickly until its run finishes, and gives up after a few tries', async () => {

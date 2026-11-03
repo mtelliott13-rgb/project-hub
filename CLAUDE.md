@@ -77,7 +77,7 @@ Rules:
 ## GitHub Actions
 
 - `.github/workflows/ci.yml` ("CI") runs `pnpm typecheck` and `pnpm test` on ubuntu-latest for every push and PR; a newer push to a branch cancels its run in progress. Linux because the repo is private (macOS minutes count 10×); tests must not depend on macOS-only tools actually running. Action versions are pinned to releases at least a couple of weeks old (pnpm/action-setup to an exact tag).
-- The card shows the branch's newest run as a coloured "CI passing / failing / running" link. `repoPoller` rechecks a repo every 30 s while it is `awaitingCi` (a run in progress, or the pushed HEAD has no run yet), at most 20 times in a row, so a finished run shows within about 30 s.
+- The card shows the branch's newest run as a coloured "CI passing / failing / running" link. `repoPoller` rechecks a repo every 30 s while it is `awaitingCi` (a run in progress, or the pushed HEAD has no run yet, including a first run when the checkout has `.github/workflows/*.yml`), at most 20 times in a row, so a finished run shows within about 30 s.
 
 ## Toolkit checklist
 

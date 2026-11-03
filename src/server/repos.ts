@@ -38,6 +38,8 @@ export type GithubStatus = {
   prs: PullRequest[];
   // The newest Actions run on the current branch, if any.
   ci: { state: Check; workflow: string; url: string; at: string; sha: string | null } | null;
+  // The checkout has workflow files in .github/workflows (so a pushed commit should get a run).
+  workflows?: boolean;
 };
 
 export type RepoStatus = {
@@ -180,11 +182,19 @@ export async function repoStatus(dir: string, gh: GhRunner): Promise<RepoStatus>
   const repo = githubRepo(out.git.remoteUrl);
   if (!repo) return out;
   try {
-    out.github = await githubStatus(repo, out.git.branch, dir, gh);
+    out.github = { ...(await githubStatus(repo, out.git.branch, dir, gh)), workflows: hasWorkflows(dir) };
   } catch (e) {
     out.githubError = message(e);
   }
   return out;
+}
+
+function hasWorkflows(dir: string): boolean {
+  try {
+    return fs.readdirSync(path.join(dir, '.github/workflows')).some((f) => /\.ya?ml$/.test(f));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -194,10 +204,11 @@ export async function repoStatus(dir: string, gh: GhRunner): Promise<RepoStatus>
  */
 export function awaitingCi(s: RepoStatus): boolean {
   const ci = s.github?.ci;
-  if (!ci) return false;
-  if (ci.state === 'pending') return true;
+  if (ci?.state === 'pending') return true;
   const g = s.git;
-  return !!(g?.tracking && g.ahead === 0 && g.commits[0] && ci.sha && g.commits[0].hash !== ci.sha);
+  const pushed = !!(g?.tracking && g.ahead === 0 && g.commits[0]);
+  if (!ci) return pushed && !!s.github?.workflows; // a first run GitHub hasn't listed yet
+  return pushed && !!ci.sha && g!.commits[0].hash !== ci.sha;
 }
 
 /**
