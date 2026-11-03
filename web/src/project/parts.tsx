@@ -6,26 +6,18 @@ import type { LaunchBody } from '../launch.ts';
 import { ConfirmDelete, ProjectForm } from '../ProjectForm.tsx';
 import { listed, resumeTarget } from '../resume.ts';
 import { navigate } from '../router.tsx';
-import { Action, ago, Badge, TextButton } from '../ui.tsx';
+import { Action, ago, TextButton } from '../ui.tsx';
 
 export type Run = (body: LaunchBody) => Promise<void>;
 
 
 /** Resume reopens whatever was touched last: the newest reopenable session, or the newest chat. */
-function resume(p: ProjectDto, run: Run) {
+export function resume(p: ProjectDto, run: Run) {
   const target = resumeTarget(p.sessions, p.chats);
   if (!target) return;
   if (target.kind === 'chat') return void run({ kind: 'chat', chatId: target.chat.id });
   if (target.session.state === 'running' && !confirm('That session is still running. Open a second copy of it anyway?')) return;
   void run({ kind: 'session', sessionId: target.session.id });
-}
-
-export function StatusBadge({ project: p }: { project: ProjectDto }) {
-  if (p.archived) return <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">archived</Badge>;
-  if (p.sessions.some((s) => s.state === 'running'))
-    return <Badge className="bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300">running</Badge>;
-  if (p.sessions.length) return <Badge className="bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300">ended</Badge>;
-  return null;
 }
 
 /** Resume, New session here, Open in VS Code, New chat in project. */

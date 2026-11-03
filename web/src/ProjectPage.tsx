@@ -1,7 +1,8 @@
 // A project's own page: everything about it, built from SECTIONS.
 import { useQuery } from '@tanstack/react-query';
 import { fetchProjects } from './api.ts';
-import { ProjectActions, ProjectMenu, StatusBadge, type Run } from './project/parts.tsx';
+import { ProjectActions, ProjectMenu, type Run } from './project/parts.tsx';
+import { LastActivity, StatusBadges, useActivity } from './project/status.tsx';
 import { SECTIONS, type Section } from './project/sections.tsx';
 import { navigate } from './router.tsx';
 import { shortenHome } from './ui.tsx';
@@ -9,6 +10,7 @@ import { shortenHome } from './ui.tsx';
 export function ProjectPage({ slug, run }: { slug: string; run: Run }) {
   const { data, error, isPending } = useQuery({ queryKey: ['projects'], queryFn: fetchProjects });
   const p = data?.find((x) => x.slug === slug);
+  const activity = useActivity()?.[slug];
   if (isPending) return <p className="text-stone-500">Loading…</p>;
   if (error) return <p className="text-red-600">{error.message}</p>;
   if (!p) return <p className="text-stone-500">There's no project called {slug}. It may have been deleted.</p>;
@@ -32,10 +34,11 @@ export function ProjectPage({ slug, run }: { slug: string; run: Run }) {
               {[...where, ...(p.github.length ? [`GitHub: ${p.github.join(', ')}`] : []), ...(p.keywords.length ? [`keywords: ${p.keywords.join(', ')}`] : [])].join(' · ')}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <StatusBadge project={p} />
-            <ProjectMenu project={p} onDeleted={() => navigate('/')} />
-          </div>
+          <ProjectMenu project={p} onDeleted={() => navigate('/')} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <StatusBadges project={p} activity={activity} />
+          <LastActivity last={activity ? activity.last : undefined} />
         </div>
         <ProjectActions project={p} run={run} />
       </header>

@@ -10,20 +10,25 @@ import { ProjectForm } from './ProjectForm.tsx';
 import { ProjectPage } from './ProjectPage.tsx';
 import { Link, route, usePath } from './router.tsx';
 import { Action } from './ui.tsx';
+import { sortProjects } from '../../src/server/activity.ts';
+import { useActivity } from './project/status.tsx';
+import { Switcher, SwitcherButton } from './Switcher.tsx';
 
 // Text you edit (notes, drafts) loads once and is never refetched underneath you.
 const EDITED_TEXT = new Set(['notes', 'draft']);
+// What a saved file can change: the recent-files lists, and last activity and timelines.
+const FILE_QUERIES = new Set(['files', 'activity']);
 
 /** Refetches whenever the server says something changed. */
 function useLiveUpdates() {
   const queryClient = useQueryClient();
   useEffect(() => {
     const source = new EventSource('/api/events');
-    // 'files' changes only the recent-files lists; anything else may change everything.
+    // 'files' changes only the recent-files lists and activity; anything else may change everything.
     source.addEventListener('change', (e) => {
       const topic = (e as MessageEvent<string>).data;
       void queryClient.invalidateQueries({
-        predicate: (q) => (topic === 'files' ? q.queryKey[0] === 'files' : !EDITED_TEXT.has(String(q.queryKey[0]))),
+        predicate: (q) => (topic === 'files' ? FILE_QUERIES.has(String(q.queryKey[0])) : !EDITED_TEXT.has(String(q.queryKey[0]))),
       });
     });
     return () => source.close();
@@ -48,6 +53,7 @@ export function App() {
   const fileError = useQuery({ queryKey: ['projects-file'], queryFn: fetchFileError }).data?.error;
   const { status, run } = useLauncher();
   const [adding, setAdding] = useState(false);
+  const [finding, setFinding] = useState(false);
   const here = route(usePath());
   const inbox = useQuery({ queryKey: ['inbox'], queryFn: fetchInbox }).data;
   const waiting = inbox ? inbox.links.length + inbox.sessions.length + inbox.chats.length : 0;
@@ -77,6 +83,7 @@ export function App() {
             Settings
           </Link>
           <span className="flex-1" />
+          <SwitcherButton onClick={() => setFinding(true)} />
           <Action primary onClick={() => setAdding(true)}>
             Add project
           </Action>
@@ -101,6 +108,7 @@ export function App() {
         {here.page === 'inbox' && <InboxPage run={run} />}
         {here.page === 'settings' && <SettingsPage />}
         {adding && <ProjectForm onClose={() => setAdding(false)} />}
+        <Switcher run={run} open={finding} setOpen={setFinding} />
       </main>
     </div>
   );
@@ -109,8 +117,11 @@ export function App() {
 function Home({ run }: { run: Run }) {
   const { data, error, isPending } = useQuery({ queryKey: ['projects'], queryFn: fetchProjects });
   const [showArchived, setShowArchived] = useState(false);
-  const active = data?.filter((p) => !p.archived) ?? [];
-  const archived = data?.filter((p) => p.archived) ?? [];
+  const activity = useActivity();
+  // Running projects first, then newest activity (src/server/activity.ts).
+  const sorted = sortProjects(data ?? [], activity, (p) => p.slug);
+  const active = sorted.filter((p) => !p.archived);
+  const archived = sorted.filter((p) => p.archived);
   return (
     <>
       {isPending && <p className="text-stone-500">Loading…</p>}
@@ -118,7 +129,7 @@ function Home({ run }: { run: Run }) {
       {data && active.length === 0 && <p className="text-stone-500">No projects yet. Use Add project to make one.</p>}
       <ul className="grid gap-4 sm:grid-cols-2">
         {active.map((p) => (
-          <ProjectCard key={p.slug} project={p} run={run} />
+          <ProjectCard key={p.slug} project={p} run={run} activity={activity?.[p.slug]} />
         ))}
       </ul>
       {archived.length > 0 && (
@@ -129,7 +140,7 @@ function Home({ run }: { run: Run }) {
           {showArchived && (
             <ul className="mt-3 grid gap-4 sm:grid-cols-2">
               {archived.map((p) => (
-                <ProjectCard key={p.slug} project={p} run={run} />
+                <ProjectCard key={p.slug} project={p} run={run} activity={activity?.[p.slug]} />
               ))}
             </ul>
           )}

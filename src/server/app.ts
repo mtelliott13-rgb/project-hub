@@ -5,7 +5,7 @@ import { desc, eq, isNotNull } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listAllProjects, type Db } from './db/index.ts';
-import { chats, projects, sessions } from './db/schema.ts';
+import { chats, links, projects, sessions } from './db/schema.ts';
 import {
   collectorDir,
   collectorLaunchSchema,
@@ -18,6 +18,8 @@ import {
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { FileWatcher } from './files.ts';
 import { addLinkRoutes, projectFileFilter } from './link-routes.ts';
+import { buildTimeline, isStale, lastActivity, type ActivityInput, type ProjectActivity } from './activity.ts';
+import { matchProject } from './matching.ts';
 import { addChatRoutes } from './chat-routes.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
@@ -134,6 +136,51 @@ export function createApp(deps: AppDeps) {
         toolkit: toolkitSummary(p),
       })),
     );
+  });
+
+  // Phase 8: each project's timeline, built on request from what the hub already
+  // has. Recent files are only what the watcher has seen (in memory), commits
+  // the last 10 per repo, CI the newest run.
+  function activityInputs(slugs?: string[]): Map<string, ActivityInput> {
+    const all = listAllProjects(db);
+    const wanted = all.filter((p) => !slugs || slugs.includes(p.slug));
+    const exists = (dir: string) => fs.existsSync(dir);
+    const listed = sessionsForProjects(db, wanted.map((p) => p.slug))
+      .map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }))
+      .filter((s) => s.resumeProblem === null || s.state === 'running');
+    const filedChats = db.select().from(chats).where(isNotNull(chats.projectSlug)).all();
+    const filedLinks = db.select().from(links).where(isNotNull(links.projectSlug)).all();
+    const recent = files.recent(() => true, 5000);
+    const out = new Map<string, ActivityInput>();
+    for (const p of wanted)
+      out.set(p.slug, {
+        sessions: listed.filter((s) => s.projectSlug === p.slug),
+        chats: filedChats.filter((ch) => ch.projectSlug === p.slug),
+        repos: p.repos.map((dir) => repos.get(dir)),
+        files: recent.filter((f) => matchProject(f.path, all) === p.slug),
+        links: filedLinks.filter((l) => l.projectSlug === p.slug),
+      });
+    return out;
+  }
+
+  /** For the home page: each project's newest activity and whether it is stale. */
+  app.get('/api/activity', (c) => {
+    const out: Record<string, ProjectActivity> = {};
+    for (const [slug, input] of activityInputs()) {
+      const last = lastActivity(buildTimeline(input));
+      out[slug] = { last, stale: isStale(last) };
+    }
+    return c.json(out);
+  });
+
+  /** One project's timeline, newest first; `?limit=` (default 30) and `total` for "Show older". */
+  app.get('/api/projects/:slug/activity', (c) => {
+    const slug = c.req.param('slug');
+    const input = activityInputs([slug]).get(slug);
+    if (!input) return c.json({ error: 'Unknown project' }, 404);
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 30, 1), 1000);
+    const events = buildTimeline(input);
+    return c.json({ events: events.slice(0, limit), total: events.length });
   });
 
   /** Whether projects.yaml currently parses. When it doesn't, the hub keeps the last good version. */

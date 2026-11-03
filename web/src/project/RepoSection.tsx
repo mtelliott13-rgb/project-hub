@@ -19,16 +19,16 @@ const Chip = ({ cls, children }: { cls: string; children: string }) => (
   <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{children}</span>
 );
 
-/** The one-line summary used on cards: branch · uncommitted · ahead/behind · PRs (CI is shown beside it, coloured). */
-export function repoFacts(s: RepoStatus): string[] {
+/** Branch · uncommitted · ahead/behind · PRs (CI is shown beside it, coloured). Cards pass `badged: false` to skip what their badges already say. */
+export function repoFacts(s: RepoStatus, { badged = true }: { badged?: boolean } = {}): string[] {
   const g = s.git;
   if (!g) return [];
   const facts = [g.branch ?? 'detached HEAD'];
-  if (g.uncommitted) facts.push(`${g.uncommitted} uncommitted`);
+  if (badged && g.uncommitted) facts.push(`${g.uncommitted} uncommitted`);
   if (!g.tracking) facts.push(s.github || g.remoteUrl ? 'not pushed' : 'no remote');
-  if (g.ahead) facts.push(`${g.ahead} to push`);
+  if (badged && g.ahead) facts.push(`${g.ahead} to push`);
   if (g.behind) facts.push(`${g.behind} to pull`);
-  if (s.github?.prs.length) facts.push(`${s.github.prs.length} open PR${s.github.prs.length === 1 ? '' : 's'}`);
+  if (badged && s.github?.prs.length) facts.push(`${s.github.prs.length} open PR${s.github.prs.length === 1 ? '' : 's'}`);
   return facts;
 }
 

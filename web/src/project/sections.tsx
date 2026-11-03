@@ -4,6 +4,7 @@
 import type { ComponentType } from 'react';
 import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
+import { ActivitySection } from './ActivitySection.tsx';
 import { ChatsSection } from './ChatsSection.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
 import { FilesSection } from './FilesSection.tsx';
@@ -27,6 +28,7 @@ export type Section = {
 
 
 export const SECTIONS: Section[] = [
+  { id: 'activity', title: () => 'Activity', column: 'main', Component: ActivitySection },
   {
     id: 'sessions',
     title: (p) => `Sessions (${listedSessions(p).length})`,

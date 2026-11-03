@@ -3,6 +3,7 @@
 import type { Chat, Link, LinkRule, Project, Session } from '../../src/server/db/schema.ts';
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
+import type { ActivityEvent, ProjectActivity } from '../../src/server/activity.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
 
@@ -159,3 +160,9 @@ export async function importExport(file: File): Promise<ImportResult> {
   if (!res.ok) throw new HubError(json.error ?? `Import failed (${res.status})`, res.status, json);
   return json as ImportResult;
 }
+
+// Phase 8: newest activity per project (home page), and one project's timeline.
+export type { ActivityEvent, ProjectActivity };
+export const fetchActivity = () => hub<Record<string, ProjectActivity>>('/api/activity');
+export const fetchTimeline = (slug: string, limit: number) =>
+  hub<{ events: ActivityEvent[]; total: number }>(`/api/projects/${slug}/activity?limit=${limit}`);
