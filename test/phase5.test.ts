@@ -11,6 +11,7 @@ import {
   githubStatus,
   gitStatus,
   repoPoller,
+  awaitingCi,
   repoStatus,
   runCheck,
   summarizeChecks,
@@ -151,12 +152,12 @@ describe('GitHub', () => {
             unexpected: 'ignored',
           },
         ]);
-      return JSON.stringify([{ status: 'completed', conclusion: 'success', workflowName: 'CI', url: 'https://github.com/me/r/actions/runs/1', createdAt: '2026-10-21T18:00:00Z' }]);
+      return JSON.stringify([{ status: 'completed', conclusion: 'success', workflowName: 'CI', url: 'https://github.com/me/r/actions/runs/1', createdAt: '2026-10-21T18:00:00Z', headSha: 'abc123' }]);
     };
     const s = await githubStatus('me/r', 'main', '/u/r', gh);
     expect(s).toEqual({
       repo: 'me/r',
-      ci: { state: 'passing', workflow: 'CI', url: 'https://github.com/me/r/actions/runs/1', at: '2026-10-21T18:00:00Z' },
+      ci: { state: 'passing', workflow: 'CI', url: 'https://github.com/me/r/actions/runs/1', at: '2026-10-21T18:00:00Z', sha: 'abc123' },
       prs: [{ number: 7, title: 'Phase 5 check', url: 'https://github.com/me/r/pull/7', branch: 'phase-5-check', draft: false, author: 'me', updatedAt: '2026-10-21T19:00:00Z', checks: 'failing' }],
     });
     expect(calls.map((a) => a.slice(0, 2).join(' '))).toEqual(['pr list', 'run list']);
@@ -205,6 +206,50 @@ describe('repo poller', () => {
     release();
     expect(poller.reposFor('/u/a/.claude/worktrees/x')).toEqual(['/u/a']);
     expect(poller.reposFor('/u/ab')).toEqual([]);
+  });
+});
+
+describe('following a CI run', () => {
+  const status = (ci: { state: 'passing' | 'failing' | 'pending'; sha: string } | null, head = 'h2', ahead = 0): RepoStatus => ({
+    dir: '/u/a',
+    checkedAt: '',
+    git: {
+      branch: 'main',
+      tracking: 'origin/main',
+      uncommitted: 0,
+      ahead,
+      behind: 0,
+      commits: [{ hash: head, short: head, date: '', subject: '', author: '' }],
+      remoteUrl: null,
+    },
+    gitError: null,
+    github: { repo: 'me/a', prs: [], ci: ci && { ...ci, workflow: 'CI', url: '', at: '' } },
+    githubError: null,
+  });
+
+  it('awaits CI while a run is in progress, or while the pushed commit has no run yet', () => {
+    expect(awaitingCi(status({ state: 'pending', sha: 'h2' }))).toBe(true);
+    expect(awaitingCi(status({ state: 'passing', sha: 'h1' }))).toBe(true); // pushed h2, newest run is for h1
+    expect(awaitingCi(status({ state: 'passing', sha: 'h2' }))).toBe(false);
+    expect(awaitingCi(status({ state: 'failing', sha: 'h1' }, 'h2', 1))).toBe(false); // h2 not pushed yet
+    expect(awaitingCi(status(null))).toBe(false); // no workflow
+  });
+
+  it('rechecks a repo quickly until its run finishes, and gives up after a few tries', async () => {
+    const answers = [status({ state: 'pending', sha: 'h2' }), status({ state: 'pending', sha: 'h2' }), status({ state: 'passing', sha: 'h2' })];
+    let checks = 0;
+    const poller = repoPoller({ repos: () => ['/u/a'], check: async () => answers[Math.min(checks++, answers.length - 1)], onChange: () => {}, ciMs: 5 });
+    await poller.refresh('/u/a');
+    await expect.poll(() => poller.get('/u/a')?.github?.ci?.state).toBe('passing');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(checks).toBe(3); // no more checks once it passed
+
+    let stuck = 0;
+    const capped = repoPoller({ repos: () => ['/u/b'], check: async () => (stuck++, status({ state: 'pending', sha: 'h2' })), onChange: () => {}, ciMs: 2, ciTries: 3 });
+    await capped.refresh('/u/b');
+    await new Promise((r) => setTimeout(r, 40));
+    expect(stuck).toBe(4); // the first check plus three quick rechecks
+    capped.stop();
   });
 });
 

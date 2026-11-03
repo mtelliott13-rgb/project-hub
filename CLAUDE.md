@@ -74,6 +74,11 @@ Rules:
 - git runs with a minimal environment and `GIT_OPTIONAL_LOCKS=0` (allowed via simple-git's `allowEnvironment`), so polling never takes git's lock or rewrites the index while you work.
 - `repoPoller` checks every active project's repos every 3 minutes and right after each Stop hook for the repo the session ran in; one check per repo at a time. Results are in memory and come with `/api/projects` as `repoStatus` (lined up with `repos`). `POST /api/projects/:slug/repos/refresh` checks now. Tests use real throwaway git repos and a fake `gh`.
 
+## GitHub Actions
+
+- `.github/workflows/ci.yml` ("CI") runs `pnpm typecheck` and `pnpm test` on ubuntu-latest for every push and PR; a newer push to a branch cancels its run in progress. Linux because the repo is private (macOS minutes count 10×); tests must not depend on macOS-only tools actually running. Action versions are pinned to releases at least a couple of weeks old (pnpm/action-setup to an exact tag).
+- The card shows the branch's newest run as a coloured "CI passing / failing / running" link. `repoPoller` rechecks a repo every 30 s while it is `awaitingCi` (a run in progress, or the pushed HEAD has no run yet), at most 20 times in a row, so a finished run shows within about 30 s.
+
 ## Toolkit checklist
 
 - A project with `toolkit.yaml` at the top level of one of its repos or folders gets "Toolkit: X of Y done" on its card (parked items don't count) and a Toolkit section on its page: in-progress items first as their own group, then each category in file order. Format: `items:` list of `name`, `category`, `url` (linked only if http/https), `cost`, `why`, optional `target` (YYYY-MM-DD, flagged when past and not done/parked), optional `notes` (shown under `why`), `status` (not started | in progress | done | parked; missing = not started).

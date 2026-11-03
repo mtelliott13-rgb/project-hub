@@ -3,7 +3,7 @@ import type { MouseEvent } from 'react';
 import type { ProjectDto } from './api.ts';
 import { listedSessions, openProject, ProjectActions, ProjectMenu, SessionList, StatusBadge, type Run } from './project/parts.tsx';
 import { Link } from './router.tsx';
-import { repoFacts } from './project/RepoSection.tsx';
+import { checkLook, repoFacts } from './project/RepoSection.tsx';
 import { ago, Row, shortenHome } from './ui.tsx';
 
 export type { Run };
@@ -50,6 +50,14 @@ export function ProjectCard({ project: p, run }: { project: ProjectDto; run: Run
             s?.git ? (
               <li key={p.repos[i]}>
                 <span className="text-stone-700 dark:text-stone-300">{repoFacts(s).join(' · ')}</span>
+                {s.github?.ci && (
+                  <>
+                    <span className="text-stone-700 dark:text-stone-300"> · </span>
+                    <a href={s.github.ci.url} target="_blank" rel="noreferrer" className={`hover:underline ${checkLook[s.github.ci.state].text}`} data-testid="card-ci">
+                      {checkLook[s.github.ci.state].label}
+                    </a>
+                  </>
+                )}
                 {s.git.commits[0] && (
                   <span className="block truncate text-stone-500">
                     Last commit: {s.git.commits[0].subject} · {ago(s.git.commits[0].date)}

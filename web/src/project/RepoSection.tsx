@@ -8,18 +8,18 @@ import type { SectionProps } from './sections.tsx';
 
 type Check = NonNullable<RepoStatus['github']>['prs'][number]['checks'];
 
-export const checkLook: Record<Check, { label: string; cls: string }> = {
-  passing: { label: 'CI passing', cls: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' },
-  failing: { label: 'CI failing', cls: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300' },
-  pending: { label: 'CI running', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
-  none: { label: 'no CI', cls: 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300' },
+export const checkLook: Record<Check, { label: string; cls: string; text: string }> = {
+  passing: { label: 'CI passing', cls: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300', text: 'font-medium text-green-700 dark:text-green-400' },
+  failing: { label: 'CI failing', cls: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300', text: 'font-medium text-red-700 dark:text-red-400' },
+  pending: { label: 'CI running', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300', text: 'font-medium text-amber-700 dark:text-amber-400' },
+  none: { label: 'no CI', cls: 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300', text: '' },
 };
 
 const Chip = ({ cls, children }: { cls: string; children: string }) => (
   <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{children}</span>
 );
 
-/** The one-line summary used on cards: branch · uncommitted · ahead/behind · PRs · CI. */
+/** The one-line summary used on cards: branch · uncommitted · ahead/behind · PRs (CI is shown beside it, coloured). */
 export function repoFacts(s: RepoStatus): string[] {
   const g = s.git;
   if (!g) return [];
@@ -29,7 +29,6 @@ export function repoFacts(s: RepoStatus): string[] {
   if (g.ahead) facts.push(`${g.ahead} to push`);
   if (g.behind) facts.push(`${g.behind} to pull`);
   if (s.github?.prs.length) facts.push(`${s.github.prs.length} open PR${s.github.prs.length === 1 ? '' : 's'}`);
-  if (s.github?.ci) facts.push(checkLook[s.github.ci.state].label);
   return facts;
 }
 
@@ -56,6 +55,7 @@ function Repo({ dir, s, project, run }: { dir: string; s: RepoStatus | null; pro
                 {f}
               </span>
             ))}
+            {gh?.ci && <Chip cls={checkLook[gh.ci.state].cls}>{checkLook[gh.ci.state].label}</Chip>}
             {gh?.ci && (
               <a href={gh.ci.url} target="_blank" rel="noreferrer" className="text-xs text-stone-500 underline">
                 {gh.ci.workflow}, {ago(gh.ci.at)}

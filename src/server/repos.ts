@@ -37,7 +37,7 @@ export type GithubStatus = {
   repo: string; // owner/repo
   prs: PullRequest[];
   // The newest Actions run on the current branch, if any.
-  ci: { state: Check; workflow: string; url: string; at: string } | null;
+  ci: { state: Check; workflow: string; url: string; at: string; sha: string | null } | null;
 };
 
 export type RepoStatus = {
@@ -112,7 +112,7 @@ const prSchema = z.array(
   }),
 );
 const runSchema = z.array(
-  z.object({ status: z.string(), conclusion: z.string().nullable().optional(), workflowName: z.string(), url: z.string(), createdAt: z.string() }),
+  z.object({ status: z.string(), conclusion: z.string().nullable().optional(), workflowName: z.string(), url: z.string(), createdAt: z.string(), headSha: z.string().optional() }),
 );
 
 const FAILED = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR', 'failure', 'cancelled', 'timed_out', 'startup_failure', 'action_required']);
@@ -148,9 +148,9 @@ export async function githubStatus(repo: string, branch: string | null, dir: str
   let ci: GithubStatus['ci'] = null;
   if (branch) {
     const [run] = runSchema.parse(
-      JSON.parse(await gh(['run', 'list', '--repo', repo, '--branch', branch, '--limit', '1', '--json', 'status,conclusion,workflowName,url,createdAt'], dir)),
+      JSON.parse(await gh(['run', 'list', '--repo', repo, '--branch', branch, '--limit', '1', '--json', 'status,conclusion,workflowName,url,createdAt,headSha'], dir)),
     );
-    if (run) ci = { state: runCheck(run.status, run.conclusion), workflow: run.workflowName, url: run.url, at: run.createdAt };
+    if (run) ci = { state: runCheck(run.status, run.conclusion), workflow: run.workflowName, url: run.url, at: run.createdAt, sha: run.headSha ?? null };
   }
   return {
     repo,
@@ -188,18 +188,55 @@ export async function repoStatus(dir: string, gh: GhRunner): Promise<RepoStatus>
 }
 
 /**
+ * True while CI is still to report on what's pushed: the newest run is in
+ * progress, or the branch is pushed but its newest run is for an older commit
+ * (GitHub hasn't started the new run yet).
+ */
+export function awaitingCi(s: RepoStatus): boolean {
+  const ci = s.github?.ci;
+  if (!ci) return false;
+  if (ci.state === 'pending') return true;
+  const g = s.git;
+  return !!(g?.tracking && g.ahead === 0 && g.commits[0] && ci.sha && g.commits[0].hash !== ci.sha);
+}
+
+/**
  * Keeps every project repo's status fresh: all of them every `everyMs`, and
  * one on demand (after a Stop event, or the page's Refresh). One check per
  * repo at a time; a request during a check runs once more when it finishes.
+ * While a repo is awaiting CI it is checked again every `ciMs` (at most
+ * `ciTries` times in a row), so a finished run shows within seconds.
  */
 export function repoPoller(opts: {
   repos: () => string[];
   check: (dir: string) => Promise<RepoStatus>;
   onChange: () => void;
+  ciMs?: number;
+  ciTries?: number;
 }) {
+  const ciMs = opts.ciMs ?? 30_000;
+  const ciTries = opts.ciTries ?? 20;
   const cache = new Map<string, RepoStatus>();
   const running = new Map<string, Promise<void>>();
   const again = new Set<string>();
+  const timers = new Map<string, NodeJS.Timeout>();
+  const tries = new Map<string, number>();
+
+  function followCi(dir: string, s: RepoStatus) {
+    if (timers.has(dir)) return;
+    const n = awaitingCi(s) ? (tries.get(dir) ?? 0) + 1 : 0;
+    if (n === 0 || n > ciTries) {
+      if (n === 0) tries.delete(dir);
+      return;
+    }
+    tries.set(dir, n);
+    const t = setTimeout(() => {
+      timers.delete(dir);
+      void refresh(dir);
+    }, ciMs);
+    t.unref?.();
+    timers.set(dir, t);
+  }
 
   function refresh(dir: string): Promise<void> {
     const inFlight = running.get(dir);
@@ -212,6 +249,7 @@ export function repoPoller(opts: {
       .then((s) => {
         cache.set(dir, s);
         opts.onChange();
+        followCi(dir, s);
       })
       .finally(() => {
         running.delete(dir);
@@ -227,6 +265,10 @@ export function repoPoller(opts: {
     refreshAll: () => Promise.all([...new Set(opts.repos())].map(refresh)).then(() => undefined),
     /** The repos a session folder belongs to (it may be inside one, e.g. a worktree). */
     reposFor: (cwd: string) => [...new Set(opts.repos())].filter((dir) => cwd === dir || cwd.startsWith(dir + path.sep)),
+    stop: () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    },
   };
 }
 
