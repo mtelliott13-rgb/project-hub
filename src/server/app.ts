@@ -18,8 +18,9 @@ import {
 import { addDocRoutes, type DocDeps } from './doc-routes.ts';
 import type { FileWatcher } from './files.ts';
 import { addLinkRoutes, projectFileFilter } from './link-routes.ts';
-import { buildTimeline, isStale, lastActivity, type ActivityInput, type ProjectActivity } from './activity.ts';
-import { matchProject } from './matching.ts';
+import { buildTimeline, isStale, lastActivity, type ProjectActivity } from './activity.ts';
+import { addAgentRoutes } from './agent-routes.ts';
+import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
@@ -60,6 +61,8 @@ type AppDeps = DocDeps & {
   home?: string;
   /** The Chrome extension's ID (Phase 7); /ext/* answers only it. */
   extensionId: string;
+  /** The MCP server's read-only token (Phase 9); accepted on /agent/* only. */
+  agentToken: string;
 };
 
 /**
@@ -138,30 +141,7 @@ export function createApp(deps: AppDeps) {
     );
   });
 
-  // Phase 8: each project's timeline, built on request from what the hub already
-  // has. Recent files are only what the watcher has seen (in memory), commits
-  // the last 10 per repo, CI the newest run.
-  function activityInputs(slugs?: string[]): Map<string, ActivityInput> {
-    const all = listAllProjects(db);
-    const wanted = all.filter((p) => !slugs || slugs.includes(p.slug));
-    const exists = (dir: string) => fs.existsSync(dir);
-    const listed = sessionsForProjects(db, wanted.map((p) => p.slug))
-      .map((s) => ({ ...s, resumeProblem: resumeProblem(s, exists) }))
-      .filter((s) => s.resumeProblem === null || s.state === 'running');
-    const filedChats = db.select().from(chats).where(isNotNull(chats.projectSlug)).all();
-    const filedLinks = db.select().from(links).where(isNotNull(links.projectSlug)).all();
-    const recent = files.recent(() => true, 5000);
-    const out = new Map<string, ActivityInput>();
-    for (const p of wanted)
-      out.set(p.slug, {
-        sessions: listed.filter((s) => s.projectSlug === p.slug),
-        chats: filedChats.filter((ch) => ch.projectSlug === p.slug),
-        repos: p.repos.map((dir) => repos.get(dir)),
-        files: recent.filter((f) => matchProject(f.path, all) === p.slug),
-        links: filedLinks.filter((l) => l.projectSlug === p.slug),
-      });
-    return out;
-  }
+  const activityInputs = (slugs?: string[]) => gatherActivity({ db, repos, files }, slugs);
 
   /** For the home page: each project's newest activity and whether it is stale. */
   app.get('/api/activity', (c) => {
@@ -214,6 +194,7 @@ export function createApp(deps: AppDeps) {
   addDocRoutes(app, deps);
   addLinkRoutes(app, deps);
   addChatRoutes(app, deps);
+  addAgentRoutes(app, deps);
 
   // The folder picker.
   app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));
@@ -390,16 +371,5 @@ export function createApp(deps: AppDeps) {
 }
 
 /** For cards: "3 of 16 done" (parked items don't count), or why the file can't be read. */
-function toolkitSummary(p: { repos: string[]; folders: string[] }) {
-  const [file] = findToolkitFiles(p);
-  if (!file) return null;
-  try {
-    const t = readToolkit(file);
-    return { file, done: t.done, total: t.total, error: null };
-  } catch (e) {
-    return { file, done: 0, total: 0, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
 export const injectToken = (html: string, uiToken: string) =>
   html.replace('</head>', `    <meta name="hub-token" content="${uiToken}" />\n  </head>`);

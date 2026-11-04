@@ -15,6 +15,9 @@ export const HUB = 'http://127.0.0.1:4747';
 /** Headers for a GET from the hub page: its token (browsers send no Origin on same-origin GETs). */
 export const PAGE_GET = { 'X-Hub-Token': 'ui-t0ken' };
 
+/** The MCP server's read-only token in tests. */
+export const AGENT_TOKEN = 'agent-t0ken';
+
 /** A made-up extension ID for tests; requests from it carry Origin chrome-extension://<it>. */
 export const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
@@ -94,6 +97,7 @@ export function testDeps(db: Db) {
       toolkitBackupDir: path.join(dir, 'backups/toolkit'),
       files,
       extensionId: EXTENSION_ID,
+      agentToken: AGENT_TOKEN,
     },
   };
 }

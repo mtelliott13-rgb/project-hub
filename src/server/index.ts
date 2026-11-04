@@ -20,6 +20,7 @@ import {
   PROJECTS_FILE,
   TOKEN_FILE,
   UI_TOKEN_FILE,
+  AGENT_TOKEN_FILE,
   WEB_DIST_DIR,
 } from './config.ts';
 import { listAllProjects, openDb } from './db/index.ts';
@@ -48,6 +49,7 @@ const db = openDb(DB_FILE, MIGRATIONS_DIR);
 
 const token = ensureToken(TOKEN_FILE);
 const uiToken = ensureToken(UI_TOKEN_FILE);
+const agentToken = ensureToken(AGENT_TOKEN_FILE);
 const launcher: Launcher =
   process.platform === 'darwin'
     ? macLauncher(LAUNCH_DIR)
@@ -184,6 +186,7 @@ const app = createApp({
   toolkitBackupDir: path.join(BACKUP_DIR, 'toolkit'),
   files,
   extensionId: extensionId(),
+  agentToken,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);

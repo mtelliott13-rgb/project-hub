@@ -107,3 +107,10 @@ Rules:
 - `web/src/Switcher.tsx`: ⌘K anywhere (also the nav's Find button), built on `cmdk`. Enter opens a project or page, ⌘Enter runs the project's Resume.
 - cmdk 1.1.1 and lucide-react 1.59.0 are pinned exactly (lucide releases almost daily; pick versions at least two weeks old when upgrading).
 
+## MCP server (Phase 9, read-only)
+
+- `scripts/mcp.ts` is a stdio MCP server (`@modelcontextprotocol/sdk`, pinned) with five read-only tools defined in `src/server/mcp-server.ts`: `list_projects`, `get_project`, `recent_sessions`, `list_ideas`, `get_toolkit`. It opens no port; it calls the running hub's `/agent/v1/*` routes (`src/server/agent-routes.ts`) with `~/.project-hub/agent-token` (0600, created on hub start, read per call).
+- `/agent/*` is GET only, needs `X-Agent-Token`, and refuses any request with `Origin` or `Sec-Fetch-Site` (so no web page can use it); the Host check applies as everywhere. The agent token works nowhere else, and the page and hook tokens don't work there. Never exposed: notes, Monetize drafts, file contents, tokens (and the hub stores no prompts). `test/phase9.test.ts` pins the tool list and every field returned, so exposing more fails a test until reviewed. Tool answers do go into the Claude conversation that asked.
+- Registered as `project-hub` in Claude Code (user scope, `~/.claude.json`) and in the Claude desktop app (`claude_desktop_config.json`, full node path since the app doesn't read `~/.zshrc`; restart the app after changes). `pnpm mcp:plan` shows the diffs, `mcp:install` / `mcp:uninstall` back up and change only the hub's entries (`--only desktop,code,allow`). The `allow` part adds one `permissions.allow` rule per tool to `~/.claude/settings.json` (never a wildcard, so a future tool isn't pre-approved); like the hooks, show that diff and get an OK before writing it.
+- Writes from MCP (adding links or notes) are not built; SPEC.md's Phase 9 lists them.
+
