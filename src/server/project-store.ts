@@ -156,16 +156,28 @@ export function watchFile(file: string, reload: () => void, pollMs = 1000): { cl
     timer = setTimeout(reload, 150);
   };
   const name = path.basename(file);
-  const watcher = fs.watch(path.dirname(file), (_event, f) => {
-    if (f === null || f === name) changed();
-  });
+  // The folder may not exist (e.g. jobs/queue/ before Career HQ writes its
+  // queue) or may be deleted later: then the once-a-second check alone
+  // notices the file appearing, so a missing folder never crashes the hub.
+  let watcher: fs.FSWatcher | null = null;
+  try {
+    watcher = fs.watch(path.dirname(file), (_event, f) => {
+      if (f === null || f === name) changed();
+    });
+    watcher.on('error', () => {
+      watcher?.close();
+      watcher = null;
+    });
+  } catch {
+    watcher = null;
+  }
   const poll = setInterval(() => {
     if (fingerprint() !== last) changed();
   }, pollMs);
   poll.unref();
   return {
     close() {
-      watcher.close();
+      watcher?.close();
       clearInterval(poll);
       clearTimeout(timer);
     },

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { packetDir, parseFillSheet, parseQueue, QUEUE_FILE, queueSummary, readQueue, setQueueStatus, sortApplications, writeQueueStatus } from '../src/server/applications.ts';
 import { createApp } from '../src/server/app.ts';
+import { watchFile } from '../src/server/project-store.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { openDb } from '../src/server/db/index.ts';
 import { AGENT_TOKEN, HUB, PAGE_GET, testDeps } from './helpers.ts';
@@ -294,5 +295,20 @@ describe('API and launches', () => {
       const text = JSON.stringify(res.body);
       expect(text).not.toMatch(/applications|Acme|Globex|fill.?sheet|review_queue/i);
     }
+  });
+});
+
+describe('watching the queue file', () => {
+  it('a folder that does not exist yet never throws, and the file is noticed once it appears', async () => {
+    const root = tmp();
+    const file = path.join(root, QUEUE_FILE); // jobs/queue/ doesn't exist
+    let changes = 0;
+    const w = watchFile(file, () => changes++, 50);
+    cleanups.push(() => w.close());
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'items: []\n');
+    const end = Date.now() + 3000;
+    while (changes === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    expect(changes).toBeGreaterThan(0);
   });
 });
