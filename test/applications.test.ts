@@ -1,10 +1,12 @@
-// Applications: Career HQ's review queue, fill sheets, status writes and PDF launches.
+// Applications: Career HQ's review queue, fill sheets (JSON and Markdown), the
+// status command and PDF launches.
 // All data here is made up; no real queue or fill sheet is used.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { packetDir, parseFillSheet, parseQueue, QUEUE_FILE, queueSummary, readQueue, setQueueStatus, sortApplications, writeQueueStatus } from '../src/server/applications.ts';
+import { findQueueFiles, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
+import { changeQueueStatus, copyCommand } from '../src/server/queue-status.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
@@ -23,7 +25,7 @@ const tmp = () => {
   return d;
 };
 
-const QUEUE = `# Written by career-hq. Project Hub changes only status.
+const QUEUE = `# Written by career-hq. Project Hub reads it.
 items:
   - id: "2026-11-03-acme-energy-data-analyst-intern"
     company: "Acme Energy"
@@ -90,8 +92,8 @@ Pat
 function repo() {
   const root = tmp();
   const career = path.join(root, 'career');
-  fs.mkdirSync(path.join(career, 'jobs/queue'), { recursive: true });
-  fs.writeFileSync(path.join(career, QUEUE_FILE), QUEUE);
+  fs.mkdirSync(path.join(career, 'jobs'), { recursive: true });
+  fs.writeFileSync(path.join(career, QUEUE_FILES[0]), QUEUE);
   const acme = path.join(career, 'jobs/packets/2026-11-03-acme-energy-data-analyst-intern');
   fs.mkdirSync(acme, { recursive: true });
   fs.writeFileSync(path.join(acme, 'resume.pdf'), '%PDF-1.4 fake');
@@ -103,7 +105,7 @@ function repo() {
   fs.mkdirSync(path.join(root, 'outside'));
   fs.writeFileSync(path.join(root, 'outside/resume.pdf'), '%PDF secret');
   fs.symlinkSync(path.join(root, 'outside/resume.pdf'), path.join(globex, 'resume.pdf'));
-  return { root, career, file: path.join(career, QUEUE_FILE), acme };
+  return { root, career, file: path.join(career, QUEUE_FILES[0]), acme };
 }
 
 describe('reading the queue', () => {
@@ -151,54 +153,6 @@ describe('reading the queue', () => {
   });
 });
 
-describe('changing a status', () => {
-  it('changes only that value, keeping its double quotes, comments and layout', () => {
-    const out = setQueueStatus(QUEUE, 0, '2026-11-03-acme-energy-data-analyst-intern', 'reviewed', '2026-11-05');
-    expect(out).toBe(QUEUE.replace('    status: "draft"\n', '    status: "reviewed"\n'));
-  });
-
-  it('submitted adds submitted_on under status; moving back removes it; an existing date is kept', () => {
-    const sub = setQueueStatus(QUEUE, 0, '2026-11-03-acme-energy-data-analyst-intern', 'submitted', '2026-11-05');
-    expect(sub).toBe(QUEUE.replace('    status: "draft"\n', '    status: "submitted"\n    submitted_on: "2026-11-05"\n'));
-    const back = setQueueStatus(sub, 0, '2026-11-03-acme-energy-data-analyst-intern', 'draft', '2026-11-06');
-    expect(back).toBe(QUEUE);
-    const globexBack = setQueueStatus(QUEUE, 1, '2026-10-28-globex-ops-analyst', 'reviewed', '2026-11-05');
-    expect(globexBack).toBe(
-      QUEUE.replace('    status: "submitted"\n    fit: "strong"\n    added: "2026-10-28"\n    submitted_on: "2026-10-30"\n', '    status: "reviewed"\n    fit: "strong"\n    added: "2026-10-28"\n'),
-    );
-    // Re-saving submitted leaves its date alone.
-    expect(setQueueStatus(QUEUE, 1, '2026-10-28-globex-ops-analyst', 'submitted', '2026-11-05')).toBe(QUEUE);
-  });
-
-  it('a comment after the value stays; plain values stay plain', () => {
-    const text = 'items:\n  - id: a\n    status: draft  # set by career-hq\n    company: A\n';
-    expect(setQueueStatus(text, 0, 'a', 'reviewed', '2026-11-05')).toBe('items:\n  - id: a\n    status: reviewed  # set by career-hq\n    company: A\n');
-    expect(setQueueStatus(text, 0, 'a', 'submitted', '2026-11-05')).toBe('items:\n  - id: a\n    status: submitted  # set by career-hq\n    submitted_on: 2026-11-05\n    company: A\n');
-  });
-
-  it('refuses when the item moved, is a one-liner, or has no status', () => {
-    expect(() => setQueueStatus(QUEUE, 0, 'someone-else', 'reviewed', '2026-11-05')).toThrow(/no longer/);
-    expect(() => setQueueStatus('items:\n  - { id: a, status: draft }\n', 0, 'a', 'reviewed', '2026-11-05')).toThrow(/one line/);
-    expect(() => setQueueStatus('items:\n  - id: a\n    company: A\n', 0, 'a', 'reviewed', '2026-11-05')).toThrow(/no plain status/);
-  });
-
-  it('writes only the version the page loaded, backs up once per run and keeps permissions', () => {
-    const { file, root } = repo();
-    fs.chmodSync(file, 0o600);
-    const backupDir = path.join(root, 'backups');
-    const backedUp = new Set<string>();
-    const v1 = readQueue(file).version;
-    const q = writeQueueStatus({ file, version: v1, index: 0, id: '2026-11-03-acme-energy-data-analyst-intern', status: 'reviewed', backupDir, backedUp });
-    expect(q.counts).toEqual({ draft: 0, reviewed: 2, submitted: 1 });
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(() => writeQueueStatus({ file, version: v1, index: 0, id: '2026-11-03-acme-energy-data-analyst-intern', status: 'draft', backupDir, backedUp })).toThrow(/changed outside the hub/);
-    writeQueueStatus({ file, version: q.version, index: 0, id: '2026-11-03-acme-energy-data-analyst-intern', status: 'draft', backupDir, backedUp });
-    expect(fs.readdirSync(backupDir)).toHaveLength(1);
-    expect(fs.readFileSync(path.join(backupDir, fs.readdirSync(backupDir)[0]), 'utf8')).toBe(QUEUE);
-    expect(fs.readFileSync(file, 'utf8')).toBe(QUEUE);
-  });
-});
-
 describe('fill sheet', () => {
   it('keeps headings, fields, hints and notes in file order', () => {
     const s = parseFillSheet(SHEET);
@@ -216,22 +170,56 @@ describe('fill sheet', () => {
   });
 });
 
-describe('API and launches', () => {
-  function setup() {
-    const r = repo();
-    const db = openDb(path.join(r.root, 'hub.db'), MIGRATIONS_DIR);
-    const t = testDeps(db);
-    cleanups.push(() => t.files.close());
-    fs.writeFileSync(t.projectsFile, `projects:\n  - slug: career\n    name: Career HQ\n    repos: [${r.career}]\n  - slug: other\n    name: Other\n    folders: [${r.root}/outside]\n`);
-    t.store.reload();
-    const app = createApp({ ...t.deps, home: r.root });
-    const page = { Origin: HUB, 'Sec-Fetch-Site': 'same-origin', 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' };
-    const call = async (method: string, url: string, body?: unknown, headers?: Record<string, string>) => {
-      const res = await app.request(`${HUB}${url}`, { method, headers: headers ?? (method === 'GET' ? PAGE_GET : page), body: body === undefined ? undefined : JSON.stringify(body) });
-      return { status: res.status, body: await res.json(), cache: res.headers.get('Cache-Control') };
-    };
-    return { ...r, t, call };
+/**
+ * A stand-in for uv: records its folder, arguments and environment, then acts
+ * by the `mode` file next to it (ok: puts after.yaml in place as the queue;
+ * fail: exits 1 with a message; noop: changes nothing; slow: sleeps).
+ */
+const FAKE_UV = `#!/bin/sh
+d=$(dirname "$0")
+printf '%s\\n' "$PWD" "$@" > "$d/args"
+env > "$d/env"
+case $(cat "$d/mode") in
+  ok) cp "$d/after.yaml" jobs/queue.yaml; echo "changed";;
+  fail) echo "starting" ; echo "No packet for that id" >&2; exit 1;;
+  noop) echo "nothing to do";;
+  slow) sleep 5;;
+esac
+`;
+
+function fakeUv(root: string, mode: 'ok' | 'fail' | 'noop' | 'slow', after?: string) {
+  const bin = path.join(root, 'fake-bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'uv'), FAKE_UV, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'mode'), mode);
+  if (after !== undefined) fs.writeFileSync(path.join(bin, 'after.yaml'), after);
+  const read = (f: string) => fs.readFileSync(path.join(bin, f), 'utf8');
+  return { uv: path.join(bin, 'uv'), args: () => read('args').trimEnd().split('\n'), env: () => read('env'), ran: () => fs.existsSync(path.join(bin, 'args')) };
+}
+
+function setup(withUv?: { mode: 'ok' | 'fail' | 'noop' | 'slow'; after?: string; script?: boolean }) {
+  const r = repo();
+  if (withUv?.script !== false) {
+    fs.mkdirSync(path.join(r.career, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(r.career, 'scripts/review_queue.py'), '# stand-in; the fake uv never runs it\n');
   }
+  const fake = withUv ? fakeUv(r.root, withUv.mode, withUv.after) : null;
+  const overrides = fake ? { uvPath: fake.uv } : {};
+  const db = openDb(path.join(r.root, 'hub.db'), MIGRATIONS_DIR);
+  const t = testDeps(db);
+  cleanups.push(() => t.files.close());
+  fs.writeFileSync(t.projectsFile, `projects:\n  - slug: career\n    name: Career HQ\n    repos: [${r.career}]\n  - slug: other\n    name: Other\n    folders: [${r.root}/outside]\n`);
+  t.store.reload();
+  const app = createApp({ ...t.deps, home: r.root, ...overrides });
+  const page = { Origin: HUB, 'Sec-Fetch-Site': 'same-origin', 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' };
+  const call = async (method: string, url: string, body?: unknown, headers?: Record<string, string>) => {
+    const res = await app.request(`${HUB}${url}`, { method, headers: headers ?? (method === 'GET' ? PAGE_GET : page), body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json(), cache: res.headers.get('Cache-Control') };
+  };
+  return { ...r, t, call, fake };
+}
+
+describe('API and launches', () => {
 
   it('the queue and a fill sheet need the page token and are never cached', async () => {
     const { call } = setup();
@@ -255,20 +243,6 @@ describe('API and launches', () => {
     const projects = (await call('GET', '/api/projects')).body;
     expect(projects.find((p: { slug: string }) => p.slug === 'career').applications).toEqual({ summary: '1 draft · 1 reviewed · 1 submitted', total: 3, error: null });
     expect(projects.find((p: { slug: string }) => p.slug === 'other').applications).toBeNull();
-  });
-
-  it('a status change writes back; a stale page gets 409 with the current queue; only the hub page may write', async () => {
-    const { call, file } = setup();
-    const { version } = (await call('GET', '/api/projects/career/applications')).body;
-    const ok = await call('PUT', '/api/projects/career/applications/2', { id: '2026-11-01-initech-intern', status: 'submitted', version });
-    expect(ok.status).toBe(200);
-    expect(fs.readFileSync(file, 'utf8')).toContain('    status: "submitted"\n    submitted_on: "');
-    const stale = await call('PUT', '/api/projects/career/applications/0', { id: '2026-11-03-acme-energy-data-analyst-intern', status: 'reviewed', version });
-    expect(stale.status).toBe(409);
-    expect(stale.body.current.counts).toEqual({ draft: 1, reviewed: 0, submitted: 2 });
-    expect((await call('PUT', '/api/projects/career/applications/0', { id: 'x', status: 'applied', version })).status).toBe(400);
-    const noOrigin = await call('PUT', '/api/projects/career/applications/0', { id: '2026-11-03-acme-energy-data-analyst-intern', status: 'reviewed', version: ok.body.version }, { 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' });
-    expect(noOrigin.status).toBe(403);
   });
 
   it('opens only PDFs of listed applications, inside the repo, always in Preview', async () => {
@@ -301,7 +275,7 @@ describe('API and launches', () => {
 describe('watching the queue file', () => {
   it('a folder that does not exist yet never throws, and the file is noticed once it appears', async () => {
     const root = tmp();
-    const file = path.join(root, QUEUE_FILE); // jobs/queue/ doesn't exist
+    const file = path.join(root, QUEUE_FILES[1]); // jobs/queue/ doesn't exist
     let changes = 0;
     const w = watchFile(file, () => changes++, 50);
     cleanups.push(() => w.close());
@@ -310,5 +284,236 @@ describe('watching the queue file', () => {
     const end = Date.now() + 3000;
     while (changes === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
     expect(changes).toBeGreaterThan(0);
+  });
+});
+
+describe('where the queue lives', () => {
+  it('jobs/queue.yaml, or the older jobs/queue/review_queue.yaml; with both, the newer one first', () => {
+    const { career } = repo();
+    const p = { repos: [career], folders: [] };
+    expect(findQueueFiles(p)).toEqual([path.join(career, 'jobs/queue.yaml')]);
+    const older = path.join(career, 'jobs/queue/review_queue.yaml');
+    fs.mkdirSync(path.dirname(older), { recursive: true });
+    fs.writeFileSync(older, 'items: []\n');
+    fs.utimesSync(path.join(career, 'jobs/queue.yaml'), new Date('2026-11-01'), new Date('2026-11-01'));
+    expect(findQueueFiles(p)).toEqual([older, path.join(career, 'jobs/queue.yaml')]);
+    fs.rmSync(path.join(career, 'jobs/queue.yaml'));
+    expect(findQueueFiles(p)).toEqual([older]);
+    // Packet paths are relative to the repo either way.
+    expect(queueRoot(path.join(career, 'jobs/queue.yaml'))).toBe(career);
+    expect(queueRoot(older)).toBe(career);
+  });
+
+  it('the page is told about a second queue file it is not showing', async () => {
+    const { call, career } = setup();
+    const older = path.join(career, 'jobs/queue/review_queue.yaml');
+    fs.mkdirSync(path.dirname(older), { recursive: true });
+    fs.writeFileSync(older, 'items: []\n');
+    fs.utimesSync(older, new Date('2026-11-01'), new Date('2026-11-01'));
+    const q = (await call('GET', '/api/projects/career/applications')).body;
+    expect(q.file).toBe(path.join(career, 'jobs/queue.yaml'));
+    expect(q.others).toEqual([older]);
+  });
+});
+
+// Fictional, in the shape SPEC.md "Fill sheet JSON" gives.
+const SHEET_JSON = {
+  format: 'career-hq fill sheet',
+  version: 1,
+  id: '2026-11-03-acme-energy-data-analyst-intern',
+  company: 'Acme Energy',
+  title: 'Data Analyst Intern',
+  generated: '2026-11-03',
+  missing_marker: '[not in profile]',
+  sections: [
+    { heading: '1. Personal info', notes: [], fields: [{ label: 'First name', value: 'Pat' }, { label: 'GitHub', value: '[not in profile]' }] },
+    {
+      heading: '5. Work experience',
+      notes: [{ text: 'Most recent first.', group: null }, { text: 'Wording not approved yet.', group: 'Example Co — Intern' }],
+      fields: [
+        { label: 'Employer', value: 'Example Co', group: 'Example Co — Intern' },
+        { label: 'Description', value: '- Built a dashboard\n- Cleaned data', group: 'Example Co — Intern', chars: 34 },
+        { label: 'Employer', value: 'Other Ltd', group: 'Other Ltd — Clerk' },
+        { label: 'Description', value: 'Filed things ✓', group: 'Other Ltd — Clerk', chars: 99 },
+      ],
+    },
+    {
+      heading: '9. Job-specific questions',
+      notes: [],
+      fields: [
+        { label: 'Why us?', value: 'Because.', chars: 8, max_chars: 500 },
+        { label: 'In one line', value: 'x'.repeat(130), chars: 130, max_chars: 120 },
+      ],
+    },
+    { heading: '10. Answer yourself', notes: [{ text: 'Salary expectations', group: null }, { text: 'References', group: 'Ask first' }], fields: [] },
+  ],
+};
+
+describe('fill sheet JSON', () => {
+  it('keeps sections, groups and notes in order; notes and missing values have no copy value; counts and limits', () => {
+    const { parts, warnings } = parseFillSheetJson(JSON.stringify(SHEET_JSON));
+    expect(warnings).toEqual([]);
+    expect(parts).toEqual([
+      { type: 'heading', level: 2, text: '1. Personal info' },
+      { type: 'field', label: 'First name', hint: null, value: 'Pat', missing: false },
+      { type: 'field', label: 'GitHub', hint: null, value: '[not in profile]', missing: true },
+      { type: 'heading', level: 2, text: '5. Work experience' },
+      { type: 'note', text: 'Most recent first.' },
+      { type: 'heading', level: 3, text: 'Example Co — Intern' },
+      { type: 'note', text: 'Wording not approved yet.' },
+      { type: 'field', label: 'Employer', hint: null, value: 'Example Co', missing: false },
+      { type: 'field', label: 'Description', hint: null, value: '- Built a dashboard\n- Cleaned data', missing: false, count: { length: 34, chars: 34, max: null } },
+      { type: 'heading', level: 3, text: 'Other Ltd — Clerk' },
+      { type: 'field', label: 'Employer', hint: null, value: 'Other Ltd', missing: false },
+      // ✓ is one character, as Career HQ counts; the file's 99 is stale and shown as such.
+      { type: 'field', label: 'Description', hint: null, value: 'Filed things ✓', missing: false, count: { length: 14, chars: 99, max: null } },
+      { type: 'heading', level: 2, text: '9. Job-specific questions' },
+      { type: 'field', label: 'Why us?', hint: null, value: 'Because.', missing: false, count: { length: 8, chars: 8, max: 500 } },
+      { type: 'field', label: 'In one line', hint: null, value: 'x'.repeat(130), missing: false, count: { length: 130, chars: 130, max: 120 } },
+      { type: 'heading', level: 2, text: '10. Answer yourself' },
+      { type: 'note', text: 'Salary expectations' },
+      { type: 'heading', level: 3, text: 'Ask first' },
+      { type: 'note', text: 'References' },
+    ]);
+  });
+
+  it('a custom missing_marker; an unknown version is read with a warning; a wrong format is refused', () => {
+    const custom = { ...SHEET_JSON, missing_marker: 'TODO', sections: [{ heading: 'A', notes: [], fields: [{ label: 'X', value: 'TODO' }, { label: 'Y', value: '[not in profile]' }] }] };
+    expect(parseFillSheetJson(JSON.stringify(custom)).parts.slice(1).map((p) => p.type === 'field' && p.missing)).toEqual([true, false]);
+    expect(parseFillSheetJson(JSON.stringify({ ...SHEET_JSON, version: 2 })).warnings).toEqual([expect.stringMatching(/version 2; this hub knows version 1/)]);
+    expect(() => parseFillSheetJson('{')).toThrow(/not valid JSON/);
+    expect(() => parseFillSheetJson(JSON.stringify({ ...SHEET_JSON, format: 'something else' }))).toThrow(/doesn't match the format: format/);
+    expect(() => parseFillSheetJson(JSON.stringify({ ...SHEET_JSON, sections: [{ heading: 'A', fields: [{ label: 'X' }] }] }))).toThrow(/sections\.0\.fields\.0\.value/);
+  });
+
+  it('read through the packet path: JSON first, Markdown when there is none or it is broken, with warnings', () => {
+    const { file, acme, root } = repo();
+    const id = '2026-11-03-acme-energy-data-analyst-intern';
+    const json = path.join(acme, 'fill_sheet.json');
+    expect(readFillSheet(file, id)).toMatchObject({ source: 'md', warnings: [] });
+    fs.writeFileSync(json, JSON.stringify(SHEET_JSON));
+    expect(readFillSheet(file, id)).toMatchObject({ source: 'json', generated: '2026-11-03', warnings: [], company: 'Acme Energy', role: 'Data Analyst Intern' });
+    fs.writeFileSync(json, JSON.stringify({ ...SHEET_JSON, id: '2026-01-01-someone-else' }));
+    expect(readFillSheet(file, id).warnings).toEqual([expect.stringMatching(/says it is for "2026-01-01-someone-else"/)]);
+    fs.writeFileSync(json, '{"format": "career-hq fill sheet"');
+    expect(readFillSheet(file, id)).toMatchObject({ source: 'md', warnings: [expect.stringMatching(/not valid JSON.*so this is fill_sheet\.md instead/)] });
+    fs.writeFileSync(json, JSON.stringify({ ...SHEET_JSON, pad: 'x'.repeat(1024 * 1024) }));
+    expect(readFillSheet(file, id)).toMatchObject({ source: 'md', warnings: [expect.stringMatching(/over 1 MB/)] });
+    fs.rmSync(path.join(acme, 'fill_sheet.md'));
+    expect(() => readFillSheet(file, id)).toThrow(/over 1 MB, and there is no fill_sheet\.md/);
+    // A fill_sheet.json that links out of the repo is never read.
+    fs.writeFileSync(path.join(root, 'outside/fill_sheet.json'), JSON.stringify(SHEET_JSON));
+    fs.rmSync(json);
+    fs.symlinkSync(path.join(root, 'outside/fill_sheet.json'), json);
+    expect(() => readFillSheet(file, id)).toThrow(/No fill sheet/);
+  });
+
+  it('served the same way: page token only, never cached, and a card offers it when only the JSON exists', async () => {
+    const { call, acme } = setup();
+    fs.rmSync(path.join(acme, 'fill_sheet.md'));
+    fs.writeFileSync(path.join(acme, 'fill_sheet.json'), JSON.stringify(SHEET_JSON));
+    const q = (await call('GET', '/api/projects/career/applications')).body;
+    expect(q.items[0].files.fillSheet).toBe(true);
+    const url = '/api/projects/career/applications/2026-11-03-acme-energy-data-analyst-intern/fill-sheet';
+    const sheet = await call('GET', url);
+    expect(sheet.cache).toBe('no-store');
+    expect(sheet.body.source).toBe('json');
+    expect((await call('GET', url, undefined, {})).status).toBe(403);
+    for (const agent of ['/agent/v1/projects', '/agent/v1/projects/career']) {
+      expect(JSON.stringify((await call('GET', agent, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/Example Co|\bPat\b|fill.?sheet|queue|applications/i);
+    }
+  });
+});
+
+describe("status changes run Career HQ's command", () => {
+  const ID = '2026-11-03-acme-energy-data-analyst-intern';
+  const AFTER = QUEUE.replace('status: "draft"', 'status: "reviewed"');
+  const body = (version: string, extra: object = {}) => ({ kind: 'queue-status', slug: 'career', id: ID, status: 'reviewed', version, ...extra });
+  const version = async (call: ReturnType<typeof setup>['call']) => (await call('GET', '/api/projects/career/applications')).body.version as string;
+
+  it('dryRun shows the exact command; nothing runs', async () => {
+    const { call, career, fake } = setup({ mode: 'ok', after: AFTER });
+    const res = await call('POST', '/api/launch', body(await version(call), { dryRun: true }));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'status', ID, 'reviewed'] });
+    expect(res.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py status ${ID} reviewed`);
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it('runs it in the repo with only those arguments and a minimal environment, then returns the updated queue', async () => {
+    process.env.PROJECT_HUB_TEST_SECRET = 'do-not-pass';
+    cleanups.push(() => delete process.env.PROJECT_HUB_TEST_SECRET);
+    const { call, career, fake, file } = setup({ mode: 'ok', after: AFTER });
+    const res = await call('POST', '/api/launch', body(await version(call)));
+    expect(res.status).toBe(200);
+    expect(res.cache).toBe('no-store');
+    expect(res.body.queue.counts).toEqual({ draft: 0, reviewed: 2, submitted: 1 });
+    expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'status', ID, 'reviewed']);
+    expect(fake!.env()).not.toContain('PROJECT_HUB_TEST_SECRET');
+    expect(fake!.env()).toContain('NO_COLOR=1');
+    expect(fs.readFileSync(file, 'utf8')).toBe(AFTER);
+  });
+
+  it('a failure shows its output and the command to copy; so does a run that changes nothing', async () => {
+    const failed = setup({ mode: 'fail' });
+    const res = await failed.call('POST', '/api/launch', body(await version(failed.call)));
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({
+      error: "Career HQ's status command failed (exit 1)",
+      output: 'No packet for that id\nstarting',
+      command: `cd ~/career && uv run python scripts/review_queue.py status ${ID} reviewed`,
+    });
+    const noop = setup({ mode: 'noop' });
+    const res2 = await noop.call('POST', '/api/launch', body(await version(noop.call)));
+    expect(res2.status).toBe(500);
+    expect(res2.body).toMatchObject({ error: 'The command finished, but the queue still shows "draft"', output: 'nothing to do', command: expect.stringContaining('status 2026-11-03') });
+  });
+
+  it('refuses before running: unknown or odd ids, bad status, a stale page, no script, a script linked outside, no uv', async () => {
+    const { call, fake, career, root } = setup({ mode: 'ok', after: AFTER });
+    const v = await version(call);
+    const post = (b: object) => call('POST', '/api/launch', b);
+    expect((await post(body(v, { id: '2026-01-01-not-listed' }))).status).toBe(404);
+    for (const id of ['x; rm -rf ~', '2026-11-03-Acme', '--help', '2026-11-03-acme energy', '2026-11-03-acme-energy-data-analyst-intern\n']) expect((await post(body(v, { id }))).status).toBe(400);
+    expect((await post(body(v, { status: 'applied' }))).status).toBe(400);
+    expect((await post(body('0'.repeat(64)))).status).toBe(409);
+    const stale = await post(body('0'.repeat(64)));
+    expect(stale.body.current.counts).toEqual({ draft: 1, reviewed: 1, submitted: 1 });
+    expect((await post({ ...body(v), slug: 'other' })).status).toBe(404);
+    // Phase 2 checks: no Origin, or no token.
+    expect((await call('POST', '/api/launch', body(v), { 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' })).status).toBe(403);
+    expect((await call('POST', '/api/launch', body(v), { Origin: HUB, 'Content-Type': 'application/json' })).status).toBe(403);
+    expect(fake!.ran()).toBe(false);
+
+    const script = path.join(career, 'scripts/review_queue.py');
+    fs.rmSync(script);
+    expect((await post(body(v))).body).toMatchObject({ error: 'No scripts/review_queue.py inside ~/career', command: expect.any(String) });
+    fs.writeFileSync(path.join(root, 'outside/review_queue.py'), '');
+    fs.symlinkSync(path.join(root, 'outside/review_queue.py'), script);
+    expect((await post(body(v))).status).toBe(409);
+    expect(fake!.ran()).toBe(false);
+
+    const noUv = setup();
+    const res = await noUv.call('POST', '/api/launch', body(await version(noUv.call)));
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/uv isn't at/);
+  });
+
+  it('a run that takes too long is stopped; one run per project at a time', async () => {
+    const { fake, root } = setup({ mode: 'slow' });
+    const p = { slug: 'career', repos: [path.join(root, 'career')], folders: [] } as never;
+    const v = readQueue(path.join(root, 'career/jobs/queue.yaml')).version;
+    const req = { kind: 'queue-status' as const, slug: 'career', id: ID, status: 'reviewed' as const, version: v };
+    const deps = { project: () => p, uvPath: fake!.uv, home: root, running: new Set<string>(), timeoutMs: 300 };
+    const res = await changeQueueStatus(req, deps);
+    expect(res).toMatchObject({ status: 500, body: { error: "The command didn't finish within 0.3 seconds, so it was stopped" } });
+    const busy = await changeQueueStatus(req, { ...deps, running: new Set(['career']) });
+    expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
+  });
+
+  it('the copyable command uses ~ and quotes odd folder names', () => {
+    expect(copyCommand('/Users/me/career-hq', ID, 'submitted', '/Users/me')).toBe(`cd ~/career-hq && uv run python scripts/review_queue.py status ${ID} submitted`);
+    expect(copyCommand('/Users/me/My Career', ID, 'draft', '/Users/me')).toBe(`cd ~/'My Career' && uv run python scripts/review_queue.py status ${ID} draft`);
+    expect(copyCommand('/opt/career', ID, 'draft', '/Users/me')).toBe(`cd /opt/career && uv run python scripts/review_queue.py status ${ID} draft`);
   });
 });

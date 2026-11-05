@@ -29,6 +29,8 @@ export const CLAUDE_DESKTOP_APP = '/Applications/Claude.app';
 // The page's token for /api/launch, separate from the hook token.
 export const UI_TOKEN_FILE = path.join(HUB_DIR, 'ui-token');
 // The MCP server's read-only token for /agent/* (Phase 9), separate from both.
+/** uv, which runs Career HQ's scripts (installed without admin rights in ~/.local/bin). */
+export const UV_BIN = path.join(os.homedir(), '.local/bin/uv');
 export const AGENT_TOKEN_FILE = path.join(HUB_DIR, 'agent-token');
 // One-shot .command files for terminal launches; each deletes itself when it runs.
 export const LAUNCH_DIR = path.join(HUB_DIR, 'launch');

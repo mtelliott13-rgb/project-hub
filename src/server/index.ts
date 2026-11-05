@@ -22,6 +22,7 @@ import {
   UI_TOKEN_FILE,
   AGENT_TOKEN_FILE,
   WEB_DIST_DIR,
+  UV_BIN,
 } from './config.ts';
 import { listAllProjects, openDb } from './db/index.ts';
 import { generateCommand } from './doc-routes.ts';
@@ -31,7 +32,7 @@ import { monetizeJobs, runMonetize } from './monetize.ts';
 import { macProbe } from './collector.ts';
 import { ghRunner, repoPoller, repoStatus } from './repos.ts';
 import { TOOLKIT_FILE } from './toolkit.ts';
-import { QUEUE_FILE } from './applications.ts';
+import { queueCandidates } from './applications.ts';
 import { fileWatcher } from './files.ts';
 import { fileInbox } from './links.ts';
 import { refileChats } from './chats.ts';
@@ -108,7 +109,7 @@ function watchToolkits() {
       .filter((p) => !p.archived)
       .flatMap((p) => [...p.repos, ...p.folders])
       .filter((dir) => fs.existsSync(dir))
-      .flatMap((dir) => [path.join(dir, TOOLKIT_FILE), path.join(dir, QUEUE_FILE)]),
+      .flatMap((dir) => [path.join(dir, TOOLKIT_FILE), ...queueCandidates([dir])]),
   );
   for (const [file, w] of toolkitWatchers) if (!wanted.has(file)) (w.close(), toolkitWatchers.delete(file));
   for (const file of wanted) if (!toolkitWatchers.has(file)) toolkitWatchers.set(file, watchFile(file, () => feed.notify()));
@@ -185,7 +186,7 @@ const app = createApp({
   onSessionActivity: refreshTitleSoon,
   repos,
   toolkitBackupDir: path.join(BACKUP_DIR, 'toolkit'),
-  queueBackupDir: path.join(BACKUP_DIR, 'queue'),
+  uvPath: UV_BIN,
   files,
   extensionId: extensionId(),
   agentToken,

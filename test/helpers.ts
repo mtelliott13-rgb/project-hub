@@ -95,7 +95,7 @@ export function testDeps(db: Db) {
       probe: { listeners: async (port: number) => listening.get(port) ?? [] },
       repos,
       toolkitBackupDir: path.join(dir, 'backups/toolkit'),
-      queueBackupDir: path.join(dir, 'backups/queue'),
+      uvPath: path.join(dir, 'no-uv-here'),
       files,
       extensionId: EXTENSION_ID,
       agentToken: AGENT_TOKEN,

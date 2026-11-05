@@ -1,14 +1,16 @@
-// Applications: Career HQ's review queue (jobs/queue/review_queue.yaml; the
-// file stays the source of truth). One card per application, drafts first and
-// then by deadline. Changing a status writes just that value back (and
-// submitted_on); if the file changed meanwhile, nothing is written and the
-// current version is shown. Clicking a card shows its fill sheet with a Copy
-// button on every field. Everything is read from local disk by the hub.
+// Applications: Career HQ's review queue (jobs/queue.yaml; Career HQ owns it).
+// One card per application, drafts first and then by deadline. Changing a
+// status runs Career HQ's own command (`uv run python scripts/review_queue.py
+// status …`) through the hub; if it fails, its output and the command to copy
+// are shown. Clicking a card shows its fill sheet (fill_sheet.json, or
+// fill_sheet.md) with a Copy button on every field except notes and missing
+// values, and character counts against any limit. Everything is read from
+// local disk by the hub.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, ExternalLink, FileText } from 'lucide-react';
+import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { useState, type MouseEvent } from 'react';
 import { APP_STATUSES, queueSummary, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FillPart, type Queue } from '../api.ts';
+import { fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FieldCount, type FillPart, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import type { SectionProps } from './sections.tsx';
 
@@ -64,7 +66,7 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
       data-status={app.status}
       onClick={open}
       className={`rounded-lg border border-stone-200 p-3 dark:border-stone-800 ${app.files.fillSheet ? 'cursor-pointer hover:border-stone-400 dark:hover:border-stone-600' : ''}`}
-      title={app.files.fillSheet ? 'Show the fill sheet' : 'No fill_sheet.md in this packet'}
+      title={app.files.fillSheet ? 'Show the fill sheet' : 'No fill_sheet.json or fill_sheet.md in this packet'}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
@@ -98,6 +100,7 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
           aria-label={`Status of ${app.company} ${app.title}`}
+          title="Runs Career HQ's status command"
           value={app.statusKnown ? app.status : ''}
           disabled={busy}
           onChange={(e) => onStatus(e.target.value as AppStatus)}
@@ -142,17 +145,25 @@ export function ApplicationsSection({ project, run }: SectionProps) {
   const slug = project.slug;
   const queryClient = useQueryClient();
   const queue = useQuery({ queryKey: ['applications', slug], queryFn: () => fetchQueue(slug) });
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string; output?: string; command?: string } | null>(null);
   const [showing, setShowing] = useState<Application | null>(null);
   const change = useMutation({
-    mutationFn: ({ app, status, version }: { app: Application; status: AppStatus; version: string }) => setApplicationStatus(slug, app, status, version),
-    onSuccess: (q, { app, status }) => {
-      queryClient.setQueryData(['applications', slug], q);
-      setNotice({ ok: true, text: `Saved: ${app.company} · ${app.title} is now ${status}.` });
+    mutationFn: ({ app, status, version }: { app: Application; status: AppStatus; version: string }) => setApplicationStatus(slug, app.id, status, version),
+    onMutate: () => setNotice(null),
+    onSuccess: (r, { app, status }) => {
+      queryClient.setQueryData(['applications', slug], r.queue);
+      setNotice({ ok: true, text: `Done: ${app.company} · ${app.title} is now ${status} (Career HQ's status command).` });
     },
-    onError: (e: Error) => {
-      setNotice({ ok: false, text: e.message });
-      const current = e instanceof HubError && e.status === 409 ? (e.body.current as Queue | null) : null;
+    onError: (e: Error, { status }) => {
+      const body = e instanceof HubError ? e.body : {};
+      const current = e instanceof HubError && e.status === 409 ? ((body.current as ShownQueue | undefined) ?? null) : null;
+      setNotice({
+        ok: false,
+        text: current ? e.message : `Couldn't change it to ${status}: ${e.message}`,
+        output: typeof body.output === 'string' && body.output ? body.output : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+      });
+      // The control goes back to what the queue says.
       if (current) queryClient.setQueryData(['applications', slug], current);
       else void queryClient.invalidateQueries({ queryKey: ['applications', slug] });
     },
@@ -163,7 +174,7 @@ export function ApplicationsSection({ project, run }: SectionProps) {
   if (queue.isPending) return <p className="text-sm text-stone-500">Loading…</p>;
   if (queue.error) return <p className="text-sm text-red-600">{queue.error.message}</p>;
   if (!q) return null;
-  if (!queueOk(q)) return <p className="text-sm text-red-600">{'error' in q ? q.error : "review_queue.yaml can't be read"}</p>;
+  if (!queueOk(q)) return <p className="text-sm text-red-600">{'error' in q ? q.error : "The review queue can't be read"}</p>;
 
   const sorted = sortApplications(q.items);
   const groups = [...APP_STATUSES, 'other'].map((s) => ({ status: s, items: sorted.filter((a) => (s === 'other' ? !a.statusKnown : a.status === s)) })).filter((g) => g.items.length);
@@ -173,9 +184,17 @@ export function ApplicationsSection({ project, run }: SectionProps) {
         <strong>{queueSummary(q.counts)}</strong>
         <span className="text-stone-500"> · from {shortenHome(q.file)}</span>
       </p>
-      {notice && (
-        <p className={`rounded-md px-3 py-2 text-sm ${notice.ok ? 'bg-stone-100 text-stone-700 dark:bg-stone-900 dark:text-stone-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>{notice.text}</p>
+      {q.others.length > 0 && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          ⚠ Also found {q.others.map(shortenHome).join(', ')}; showing the newer {shortenHome(q.file)}.
+        </p>
       )}
+      {change.isPending && (
+        <p className="inline-flex items-center gap-1.5 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300" role="status">
+          <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's status command…
+        </p>
+      )}
+      {notice && <Notice notice={notice} />}
       {q.problems.map((p) => (
         <p key={p} className="text-xs text-amber-700">
           {p}
@@ -203,6 +222,25 @@ export function ApplicationsSection({ project, run }: SectionProps) {
         </div>
       ))}
       {showing && <FillSheetModal slug={slug} app={showing} onClose={() => setShowing(null)} />}
+    </div>
+  );
+}
+
+function Notice({ notice }: { notice: { ok: boolean; text: string; output?: string; command?: string } }) {
+  if (notice.ok) return <p className="rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300">{notice.text}</p>;
+  return (
+    <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200" role="alert" data-testid="status-failed">
+      <p>{notice.text}</p>
+      {notice.output && <pre className="max-h-48 overflow-auto rounded bg-white/70 p-2 text-xs whitespace-pre-wrap text-stone-800 dark:bg-black/30 dark:text-stone-200">{notice.output}</pre>}
+      {notice.command && (
+        <div>
+          <p className="text-xs">Or run it yourself in Terminal:</p>
+          <div className="mt-1 flex items-start gap-2">
+            <code className="min-w-0 flex-1 rounded bg-white/70 px-2 py-1 text-xs break-all text-stone-800 dark:bg-black/30 dark:text-stone-200">{notice.command}</code>
+            <CopyButton value={notice.command} label="the command" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -246,11 +284,20 @@ function Part({ part }: { part: FillPart }) {
       return (
         <div className="flex items-start gap-2 py-1" data-testid="fill-field">
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-stone-500">
-              {part.label}
-              {part.hint && <span className="ml-1 text-stone-400">{part.hint}</span>}
+            <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-stone-500">
+              <span>
+                {part.label}
+                {part.hint && <span className="ml-1 text-stone-400">{part.hint}</span>}
+              </span>
+              {part.count && <CharCount count={part.count} />}
             </p>
-            <pre className={`font-sans text-sm break-words whitespace-pre-wrap ${part.missing ? 'text-stone-400 italic' : ''}`}>{part.value || '(blank)'}</pre>
+            {part.missing ? (
+              <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300" data-testid="fill-missing" title={part.value}>
+                <AlertTriangle size={13} aria-hidden /> Not in your profile; fill this in yourself.
+              </p>
+            ) : (
+              <pre className="font-sans text-sm break-words whitespace-pre-wrap">{part.value || '(blank)'}</pre>
+            )}
           </div>
           {!part.missing && <CopyButton value={part.value} label={part.label} />}
         </div>
@@ -258,13 +305,42 @@ function Part({ part }: { part: FillPart }) {
   }
 }
 
+/** "300 chars", or "484 / 500" against the form's limit, red when over; flagged if the file's own count is stale. */
+function CharCount({ count }: { count: FieldCount }) {
+  const over = count.max !== null && count.length > count.max;
+  const stale = count.chars !== null && count.chars !== count.length;
+  return (
+    <span
+      data-testid="char-count"
+      data-over={over || undefined}
+      className={`tabular-nums ${over ? 'font-medium text-red-600 dark:text-red-400' : 'text-stone-400'}`}
+      title={over ? `${count.length - count.max!} characters over the form's ${count.max}-character limit` : count.max !== null ? `The form allows ${count.max} characters` : 'Character count'}
+    >
+      {count.max !== null ? `${count.length} / ${count.max}` : `${count.length} chars`}
+      {over && ` · ${count.length - count.max!} over`}
+      {stale && <span className="ml-1 text-amber-600" title={`fill_sheet.json says ${count.chars}; the value has ${count.length}`}>(file says {count.chars})</span>}
+    </span>
+  );
+}
+
 function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application; onClose: () => void }) {
-  const sheet = useQuery({ queryKey: ['fill-sheet', slug, app.id], queryFn: () => fetchFillSheet(slug, app.id), staleTime: Infinity });
+  const sheet = useQuery({ queryKey: ['fill-sheet', slug, app.id], queryFn: () => fetchFillSheet(slug, app.id), gcTime: 0 });
   return (
     <Modal title={`Fill sheet · ${app.company} · ${app.title}`} onClose={onClose} wide>
       <div className="-mt-2 max-h-[75vh] space-y-1 overflow-y-auto pr-1" data-testid="fill-sheet">
         {sheet.isPending && <p className="text-sm text-stone-500">Loading…</p>}
         {sheet.error && <p className="text-sm text-red-600">{sheet.error.message}</p>}
+        {sheet.data && (
+          <p className="text-xs text-stone-500">
+            From {sheet.data.source === 'json' ? 'fill_sheet.json' : 'fill_sheet.md'}
+            {sheet.data.generated && `, generated ${fmtDate(sheet.data.generated)}`}
+          </p>
+        )}
+        {sheet.data?.warnings.map((w) => (
+          <p key={w} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300" role="alert">
+            ⚠ {w}
+          </p>
+        ))}
         {sheet.data?.parts.map((p, i) => <Part key={i} part={p} />)}
       </div>
       <div className="mt-4 flex justify-end">

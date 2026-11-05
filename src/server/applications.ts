@@ -1,23 +1,26 @@
-// Job applications: Career HQ's review queue (jobs/queue/review_queue.yaml,
-// format in ~/career-hq/SPEC.md "Review queue format") and each packet's
-// fill sheet (fill_sheet.md). Career HQ writes the queue; the hub reads it and
-// changes one item's `status` (plus `submitted_on`) with the same rules as
-// toolkit.yaml: only those characters change, the result is re-parsed and
-// checked, a stale page is refused, and the first write per hub run is
-// backed up. Everything here is local: never sent anywhere, never exposed
-// through the MCP tools.
+// Job applications: Career HQ's review queue (jobs/queue.yaml, or the older
+// jobs/queue/review_queue.yaml; format in ~/career-hq/SPEC.md "Review queue
+// format") and each packet's fill sheet (fill_sheet.json, falling back to
+// fill_sheet.md). Career HQ writes all of these; the hub only reads them.
+// Status changes run Career HQ's own command (queue-status.ts). Everything
+// here is local: never sent anywhere, never exposed through the MCP tools.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isMap, isScalar, isSeq, parse, parseDocument, Scalar, type YAMLMap } from 'yaml';
+import { parse } from 'yaml';
+import { z } from 'zod';
 import { APP_STATUSES, FITS, type AppStatus } from './queue-rules.ts';
 
 export { APP_STATUSES, FITS, queueSummary, sortApplications, type AppStatus } from './queue-rules.ts';
 
-export const QUEUE_FILE = 'jobs/queue/review_queue.yaml';
+/** Where Career HQ writes the queue, relative to its repo: the current place first, then the older one. */
+export const QUEUE_FILES = ['jobs/queue.yaml', 'jobs/queue/review_queue.yaml'] as const;
 export const PACKET_FILES = { resume: 'resume.pdf', 'cover-letter': 'cover_letter.pdf' } as const;
 export type PacketFile = keyof typeof PACKET_FILES;
-const FILL_SHEET = 'fill_sheet.md';
+const FILL_SHEET_MD = 'fill_sheet.md';
+const FILL_SHEET_JSON = 'fill_sheet.json';
+/** A fill_sheet.json bigger than this isn't read (the real ones are tens of KB). */
+const FILL_SHEET_MAX_BYTES = 1024 * 1024;
 
 export class QueueError extends Error {
   status: 400 | 404 | 409;
@@ -28,7 +31,7 @@ export class QueueError extends Error {
 }
 
 export type Application = {
-  /** Position in `items`; a write names the item by this and its `id`. */
+  /** Position in `items`. */
   index: number;
   id: string;
   company: string;
@@ -54,7 +57,7 @@ export type Application = {
 
 export type Queue = {
   file: string;
-  /** sha256 of the file's bytes; a write must name the version the page loaded. */
+  /** sha256 of the file's bytes; a status change must name the version the page loaded. */
   version: string;
   items: Application[];
   counts: Record<AppStatus, number>;
@@ -62,7 +65,7 @@ export type Queue = {
   problems: string[];
 };
 
-const versionOf = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
+export const versionOf = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
 const str = (v: unknown): string | null => (v === null || v === undefined || v === '' || typeof v === 'object' ? null : String(v));
 const httpUrl = (v: string | null) => {
   if (!v) return null;
@@ -74,13 +77,36 @@ const httpUrl = (v: string | null) => {
   }
 };
 
-/** The queue file in the project's repos, then folders (the first one wins). */
+const mtime = (f: string) => {
+  try {
+    return fs.statSync(f).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * The queue files in the project's repos, then folders. Within one folder,
+ * when both places hold a queue, the newer file comes first (the page warns
+ * about the other). The first one is the one shown.
+ */
 export function findQueueFiles(p: { repos: string[]; folders: string[] }): string[] {
-  return [...new Set([...p.repos, ...p.folders])].map((d) => path.join(d, QUEUE_FILE)).filter((f) => fs.existsSync(f));
+  return [...new Set([...p.repos, ...p.folders])].flatMap((d) =>
+    QUEUE_FILES.map((q) => path.join(d, q))
+      .filter((f) => fs.existsSync(f))
+      .sort((a, b) => mtime(b) - mtime(a)),
+  );
 }
 
-/** The folder the queue's paths are relative to: the repo holding jobs/queue/. */
-export const queueRoot = (file: string) => path.resolve(path.dirname(file), '..', '..');
+/** Every path a queue could be at in these folders (watched even before it exists). */
+export const queueCandidates = (dirs: string[]) => dirs.flatMap((d) => QUEUE_FILES.map((q) => path.join(d, q)));
+
+/** The folder the queue's paths are relative to: the repo holding jobs/. */
+export function queueRoot(file: string) {
+  const norm = file.split(path.sep).join('/');
+  const q = QUEUE_FILES.find((name) => norm.endsWith(`/${name}`));
+  return q ? file.slice(0, file.length - q.length - 1) : path.resolve(path.dirname(file), '..');
+}
 
 /**
  * A packet folder, only if it resolves (symlinks followed) to somewhere inside
@@ -100,7 +126,7 @@ export function packetDir(root: string, packet: string | null): string | null {
   return real.startsWith(realRoot + path.sep) && fs.statSync(real).isDirectory() ? real : null;
 }
 
-/** A packet file (resume.pdf, cover_letter.pdf, fill_sheet.md) inside the repo, or null. */
+/** A packet file (resume.pdf, cover_letter.pdf, a fill sheet) inside the repo, or null. */
 export function packetFile(root: string, packet: string | null, name: string): string | null {
   const dir = packetDir(root, packet);
   if (!dir) return null;
@@ -162,7 +188,7 @@ export function parseQueue(text: string, file: string): Queue {
       files: {
         resume: !!packetFile(root, packet, PACKET_FILES.resume),
         coverLetter: !!packetFile(root, packet, PACKET_FILES['cover-letter']),
-        fillSheet: !!packetFile(root, packet, FILL_SHEET),
+        fillSheet: !!(packetFile(root, packet, FILL_SHEET_JSON) || packetFile(root, packet, FILL_SHEET_MD)),
       },
       problems: issues,
     });
@@ -174,110 +200,23 @@ export function parseQueue(text: string, file: string): Queue {
 
 export const readQueue = (file: string) => parseQueue(fs.readFileSync(file, 'utf8'), file);
 
-/** Written the way the file already writes that value (SPEC.md: every string in double quotes). */
-function scalarText(value: string, type: Scalar['type'] | undefined) {
-  if (type === Scalar.QUOTE_SINGLE) return `'${value}'`;
-  if (type === Scalar.PLAIN) return value;
-  return JSON.stringify(value);
-}
+// Fill sheets: one list of parts in display order, from fill_sheet.json when
+// the packet has it (SPEC.md "Fill sheet JSON") or else fill_sheet.md
+// (headings, **Label** lines each followed by the value in its own fenced code
+// block, > notes and plain text). Notes never get a Copy button; neither does a
+// missing value.
+export type FieldCount = {
+  /** The value's length in characters (Unicode code points, as Career HQ counts). */
+  length: number;
+  /** The length Career HQ wrote (`chars`); differs from `length` only if the file is stale. */
+  chars: number | null;
+  /** The form's limit (`max_chars`), if Career HQ gave one. */
+  max: number | null;
+};
 
-/**
- * Sets item `index`'s status, changing only that value's characters. Moving to
- * `submitted` adds `submitted_on: "<today>"` if there is none; moving away from
- * it removes the `submitted_on` line (SPEC.md: set only when submitted).
- * Refuses if the item at `index` isn't `id`, then parses the result and
- * checks nothing else changed.
- */
-export function setQueueStatus(text: string, index: number, id: string, status: AppStatus, today: string): string {
-  const doc = parseDocument(text);
-  if (doc.errors.length) throw new QueueError(400, `The queue is not valid YAML: ${doc.errors[0].message}`);
-  const seq = doc.get('items', true);
-  if (!isSeq(seq)) throw new QueueError(400, 'The queue needs a top-level `items:` list');
-  const item = seq.items[index];
-  if (!isMap(item) || str(item.get('id')) !== id) throw new QueueError(409, `Item ${index + 1} is no longer "${id}"; the file has changed`);
-  if (item.flow || !item.range) throw new QueueError(400, `"${id}" is written on one line ({…}); change it by hand`);
-  const statusNode = (item as YAMLMap).get('status', true);
-  if (!isScalar(statusNode) || !statusNode.range) throw new QueueError(400, `"${id}" has no plain status value to change`);
-  const submittedPair = (item as YAMLMap).items.find((pair) => isScalar(pair.key) && pair.key.value === 'submitted_on');
-
-  // Edits as [start, end, replacement], applied from the end so ranges stay valid.
-  const edits: [number, number, string][] = [[statusNode.range[0], statusNode.range[1], scalarText(status, statusNode.type)]];
-  if (status === 'submitted' && !submittedPair) {
-    // A new line right after the status line, at the same indent.
-    const keyNode = (item as YAMLMap).items.find((pair) => isScalar(pair.key) && pair.key.value === 'status')!.key as Scalar;
-    const lineStart = text.lastIndexOf('\n', keyNode.range![0] - 1) + 1;
-    const indent = keyNode.range![0] - lineStart;
-    const lineEnd = text.indexOf('\n', statusNode.range[1]);
-    const at = lineEnd === -1 ? text.length : lineEnd;
-    edits.push([at, at, `\n${' '.repeat(indent)}submitted_on: ${scalarText(today, statusNode.type)}`]);
-  } else if (status !== 'submitted' && submittedPair) {
-    const key = submittedPair.key as Scalar;
-    if (!key.range) throw new QueueError(400, `"${id}" has a submitted_on line the hub can't find`);
-    const lineStart = text.lastIndexOf('\n', key.range[0] - 1) + 1;
-    const lineEnd = text.indexOf('\n', key.range[0]);
-    if (text.slice(lineStart, key.range[0]).trim() !== '') throw new QueueError(400, `"${id}" has submitted_on on a shared line; change it by hand`);
-    edits.push([lineStart, lineEnd === -1 ? text.length : lineEnd + 1, '']);
-  }
-  let out = text;
-  for (const [start, end, rep] of edits.sort((a, b) => b[0] - a[0])) out = out.slice(0, start) + rep + out.slice(end);
-
-  const before = parse(text) as { items: Record<string, unknown>[] };
-  let after: { items: Record<string, unknown>[] };
-  try {
-    after = parse(out);
-  } catch {
-    throw new QueueError(400, 'Refusing to save: the edited queue would not parse');
-  }
-  const expected = structuredClone(before);
-  const changed: Record<string, unknown> = { ...expected.items[index], status };
-  if (status === 'submitted') changed.submitted_on ??= today;
-  else delete changed.submitted_on;
-  expected.items[index] = changed;
-  const sortKeys = (o: unknown): unknown =>
-    Array.isArray(o) ? o.map(sortKeys) : o && typeof o === 'object' ? Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, sortKeys(v)])) : o;
-  if (JSON.stringify(sortKeys(after)) !== JSON.stringify(sortKeys(expected))) {
-    throw new QueueError(400, "Refusing to save: the edit would change more than this application's status");
-  }
-  return out;
-}
-
-/** Writes a status if the file is still the version the page loaded (backup on the first write per run). */
-export function writeQueueStatus(opts: {
-  file: string;
-  version: string;
-  index: number;
-  id: string;
-  status: AppStatus;
-  backupDir: string;
-  backedUp: Set<string>;
-  now?: Date;
-}): Queue {
-  const text = fs.readFileSync(opts.file, 'utf8');
-  if (versionOf(text) !== opts.version) {
-    throw new QueueError(409, 'The review queue was changed outside the hub since this page loaded it, so your change was not saved. This is the current version.');
-  }
-  const now = opts.now ?? new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const out = setQueueStatus(text, opts.index, opts.id, opts.status, today);
-  if (!opts.backedUp.has(opts.file)) {
-    fs.mkdirSync(opts.backupDir, { recursive: true, mode: 0o700 });
-    const stamp = now.toISOString().replace(/[:.]/g, '-');
-    fs.writeFileSync(path.join(opts.backupDir, `review_queue.${stamp}.yaml`), text, { flag: 'wx', mode: 0o600 });
-    opts.backedUp.add(opts.file);
-  }
-  const mode = fs.statSync(opts.file).mode & 0o777;
-  const tmp = `${opts.file}.project-hub-tmp`;
-  fs.writeFileSync(tmp, out, { mode });
-  fs.renameSync(tmp, opts.file);
-  return parseQueue(out, opts.file);
-}
-
-// Fill sheets (SPEC.md "Fill sheet"): headings, **Label** lines each followed
-// by the value in its own fenced code block, > notes and plain text, kept in
-// file order so the page shows them exactly as the sheet lays them out.
 export type FillPart =
   | { type: 'heading'; level: number; text: string }
-  | { type: 'field'; label: string; hint: string | null; value: string; missing: boolean }
+  | { type: 'field'; label: string; hint: string | null; value: string; missing: boolean; count?: FieldCount }
   | { type: 'note'; text: string }
   | { type: 'text'; text: string };
 
@@ -328,13 +267,135 @@ export function parseFillSheet(md: string): { title: string | null; parts: FillP
   return { title, parts };
 }
 
-/** A queue item's fill sheet, read from inside the repo only. */
-export function readFillSheet(file: string, id: string) {
+// fill_sheet.json, version 1. Unknown keys are ignored; an unknown `version`
+// is still read (and warned about), as SPEC.md asks.
+const FILL_SHEET_FORMAT = 'career-hq fill sheet';
+const KNOWN_VERSION = 1;
+const count = z.number().int().nonnegative();
+const fillSheetJsonSchema = z.object({
+  format: z.literal(FILL_SHEET_FORMAT),
+  version: z.number(),
+  id: z.string().optional(),
+  company: z.string().optional(),
+  title: z.string().optional(),
+  generated: z.string().optional(),
+  missing_marker: z.string().default('[not in profile]'),
+  sections: z.array(
+    z.object({
+      heading: z.string(),
+      notes: z.array(z.object({ text: z.string(), group: z.string().nullish() })).default([]),
+      fields: z
+        .array(
+          z.object({
+            label: z.string(),
+            value: z.string(),
+            group: z.string().nullish(),
+            chars: count.nullish(),
+            max_chars: z.number().int().positive().nullish(),
+          }),
+        )
+        .default([]),
+    }),
+  ),
+});
+export type FillSheetJson = z.infer<typeof fillSheetJsonSchema>;
+
+export const charCount = (s: string) => [...s].length;
+
+/**
+ * Parses fill_sheet.json into parts: each section's heading, its section-wide
+ * notes, then its fields, with a sub-heading where the `group` changes and that
+ * group's notes under it. Notes for a group with no fields come last, under
+ * their group's name.
+ */
+export function parseFillSheetJson(text: string): { sheet: FillSheetJson; parts: FillPart[]; warnings: string[] } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    throw new QueueError(400, `${FILL_SHEET_JSON} is not valid JSON (${e instanceof Error ? e.message : e})`);
+  }
+  const parsed = fillSheetJsonSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new QueueError(400, `${FILL_SHEET_JSON} doesn't match the format: ${issue.path.join('.') || 'top level'}: ${issue.message}`);
+  }
+  const sheet = parsed.data;
+  const warnings: string[] = [];
+  if (sheet.version !== KNOWN_VERSION) warnings.push(`${FILL_SHEET_JSON} is version ${sheet.version}; this hub knows version ${KNOWN_VERSION}, so something may be missing or shown wrong.`);
+  const parts: FillPart[] = [];
+  for (const section of sheet.sections) {
+    parts.push({ type: 'heading', level: 2, text: section.heading });
+    const notesFor = (group: string | null) => section.notes.filter((n) => (n.group ?? null) === group).map((n): FillPart => ({ type: 'note', text: n.text }));
+    parts.push(...notesFor(null));
+    const shown = new Set<string>();
+    let current: string | null = null;
+    for (const f of section.fields) {
+      const group = f.group ?? null;
+      if (group !== current) {
+        current = group;
+        if (group !== null) {
+          parts.push({ type: 'heading', level: 3, text: group });
+          if (!shown.has(group)) parts.push(...notesFor(group));
+          shown.add(group);
+        }
+      }
+      const missing = f.value === sheet.missing_marker;
+      const field: FillPart = { type: 'field', label: f.label, hint: null, value: f.value, missing };
+      if (!missing && (f.chars != null || f.max_chars != null)) field.count = { length: charCount(f.value), chars: f.chars ?? null, max: f.max_chars ?? null };
+      parts.push(field);
+    }
+    for (const group of new Set(section.notes.map((n) => n.group ?? null))) {
+      if (group === null || shown.has(group)) continue;
+      parts.push({ type: 'heading', level: 3, text: group }, ...notesFor(group));
+    }
+  }
+  return { sheet, parts, warnings };
+}
+
+export type FillSheet = {
+  id: string;
+  company: string;
+  role: string;
+  sheetTitle: string | null;
+  /** Which file the parts came from. */
+  source: 'json' | 'md';
+  /** When Career HQ generated it (JSON only). */
+  generated: string | null;
+  /** Shown above the sheet: an unknown version, an id that doesn't match, or why the JSON couldn't be used. */
+  warnings: string[];
+  parts: FillPart[];
+};
+
+/**
+ * A queue item's fill sheet, read from inside the repo only: fill_sheet.json
+ * when the packet has one that reads, else fill_sheet.md (with a warning if the
+ * JSON was there but couldn't be used).
+ */
+export function readFillSheet(file: string, id: string): FillSheet {
   const q = readQueue(file);
   const item = q.items.find((i) => i.id === id);
   if (!item) throw new QueueError(404, `"${id}" isn't in the review queue`);
-  const f = packetFile(queueRoot(file), item.packet, FILL_SHEET);
-  if (!f) throw new QueueError(404, `No ${FILL_SHEET} in ${item.packet ?? 'its packet'}`);
-  const sheet = parseFillSheet(fs.readFileSync(f, 'utf8'));
-  return { id, company: item.company, role: item.title, sheetTitle: sheet.title, parts: sheet.parts };
+  const root = queueRoot(file);
+  const base = { id, company: item.company, role: item.title };
+  let jsonProblem: string | null = null;
+  const jsonFile = packetFile(root, item.packet, FILL_SHEET_JSON);
+  if (jsonFile) {
+    try {
+      if (fs.statSync(jsonFile).size > FILL_SHEET_MAX_BYTES) throw new QueueError(400, `${FILL_SHEET_JSON} is over ${FILL_SHEET_MAX_BYTES / 1024 / 1024} MB`);
+      const { sheet, parts, warnings: w } = parseFillSheetJson(fs.readFileSync(jsonFile, 'utf8'));
+      if (sheet.id !== undefined && sheet.id !== id) w.push(`${FILL_SHEET_JSON} says it is for "${sheet.id}", not "${id}". Check you have the right packet.`);
+      return { ...base, sheetTitle: null, source: 'json', generated: sheet.generated ?? null, warnings: w, parts };
+    } catch (e) {
+      if (!(e instanceof QueueError)) throw e;
+      jsonProblem = e.message;
+    }
+  }
+  const mdFile = packetFile(root, item.packet, FILL_SHEET_MD);
+  if (!mdFile) {
+    throw new QueueError(jsonProblem ? 400 : 404, jsonProblem ? `${jsonProblem}, and there is no ${FILL_SHEET_MD} to fall back on.` : `No fill sheet in ${item.packet ?? 'its packet'}`);
+  }
+  const md = parseFillSheet(fs.readFileSync(mdFile, 'utf8'));
+  const warnings = jsonProblem ? [`${jsonProblem}, so this is ${FILL_SHEET_MD} instead.`] : [];
+  return { ...base, sheetTitle: md.title, source: 'md', generated: null, warnings, parts: md.parts };
 }

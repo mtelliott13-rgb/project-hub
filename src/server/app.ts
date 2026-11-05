@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { desc, eq, isNotNull } from 'drizzle-orm';
@@ -28,6 +29,7 @@ import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
+import { changeQueueStatus, queueStatusSchema } from './queue-status.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
 import type { ProjectStore } from './project-store.ts';
 import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
@@ -65,8 +67,8 @@ type AppDeps = DocDeps & {
   extensionId: string;
   /** The MCP server's read-only token (Phase 9); accepted on /agent/* only. */
   agentToken: string;
-  /** Where review_queue.yaml is backed up before the hub first writes to it each run. */
-  queueBackupDir: string;
+  /** Full path to uv, for Career HQ's status command (queue-status.ts). */
+  uvPath: string;
 };
 
 /**
@@ -102,6 +104,8 @@ export function createApp(deps: AppDeps) {
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
+  // Projects with Career HQ's status command running now.
+  const queueRuns = new Set<string>();
   const app = new Hono();
 
   // Only answer requests addressed to the hub itself. This stops DNS rebinding:
@@ -243,6 +247,15 @@ export function createApp(deps: AppDeps) {
 
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
+    // An application's status: runs Career HQ's own command and reports its result.
+    if ((body as { kind?: unknown } | null)?.kind === 'queue-status') {
+      const queueReq = queueStatusSchema.safeParse(body);
+      if (!queueReq.success) return c.json({ error: `bad status request: ${queueReq.error.issues[0].path.join('.')} ${queueReq.error.issues[0].message}` }, 400);
+      const result = await changeQueueStatus(queueReq.data, { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns });
+      if (result.status === 200 && !queueReq.data.dryRun) feed.notify();
+      c.header('Cache-Control', 'no-store');
+      return c.json(result.body, result.status);
+    }
     const collectorReq = collectorLaunchSchema.safeParse(body);
     const launchReq = launchRequestSchema.safeParse(body);
     const req = collectorReq.data ?? launchReq.data;
