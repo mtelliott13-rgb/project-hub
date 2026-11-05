@@ -5,6 +5,7 @@ import type { ComponentType } from 'react';
 import type { ProjectDto } from '../api.ts';
 import { ProjectIdeas } from '../IdeasPage.tsx';
 import { ActivitySection } from './ActivitySection.tsx';
+import { ApplicationsSection } from './ApplicationsSection.tsx';
 import { ChatsSection } from './ChatsSection.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
 import { FilesSection } from './FilesSection.tsx';
@@ -36,6 +37,7 @@ export const SECTIONS: Section[] = [
     Component: ({ project, run }) => <SessionList sessions={project.sessions} run={run} preview={10} />,
   },
   { id: 'collector', title: () => 'Collector', column: 'main', Component: CollectorSection, show: (p) => p.collector !== null },
+  { id: 'applications', title: () => 'Applications', column: 'main', Component: ApplicationsSection, show: (p) => p.applications !== null },
   { id: 'toolkit', title: () => 'Toolkit', column: 'main', Component: ToolkitSection, show: (p) => p.toolkit !== null },
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: RepoSection },

@@ -4,6 +4,8 @@ import type { Chat, Link, LinkRule, Project, Session } from '../../src/server/db
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { ActivityEvent, ProjectActivity } from '../../src/server/activity.ts';
+import type { Application, FillPart, Queue } from '../../src/server/applications.ts';
+import type { AppStatus } from '../../src/server/queue-rules.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
 
@@ -18,6 +20,8 @@ export type ProjectDto = Jsonified<Project> & {
   chats: Jsonified<Chat>[];
   repoStatus: (RepoStatus | null)[];
   toolkit: { file: string; done: number; total: number; error: string | null } | null;
+  /** Null without a jobs/queue/review_queue.yaml. */
+  applications: { summary: string | null; total: number; error: string | null } | null;
 };
 export type { RepoStatus };
 export type { FolderEntry, ProjectInput };
@@ -166,3 +170,13 @@ export type { ActivityEvent, ProjectActivity };
 export const fetchActivity = () => hub<Record<string, ProjectActivity>>('/api/activity');
 export const fetchTimeline = (slug: string, limit: number) =>
   hub<{ events: ActivityEvent[]; total: number }>(`/api/projects/${slug}/activity?limit=${limit}`);
+
+// Applications: Career HQ's review queue (jobs/queue/review_queue.yaml) and fill sheets.
+export type { Application, FillPart, Queue };
+export type QueueResponse = Queue | { file: string; error: string };
+export const queueOk = (r: QueueResponse | undefined): r is Queue => !!r && 'items' in r;
+export type FillSheet = { id: string; company: string; role: string; sheetTitle: string | null; parts: FillPart[] };
+export const fetchQueue = (slug: string) => hub<QueueResponse>(`/api/projects/${slug}/applications`);
+export const fetchFillSheet = (slug: string, id: string) => hub<FillSheet>(`/api/projects/${slug}/applications/${encodeURIComponent(id)}/fill-sheet`);
+export const setApplicationStatus = (slug: string, item: { index: number; id: string }, status: AppStatus, version: string) =>
+  hub<Queue>(`/api/projects/${slug}/applications/${item.index}`, { method: 'PUT', body: { id: item.id, status, version } });

@@ -26,6 +26,8 @@ export const launchRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('editor'), slug, path: z.string().optional(), dryRun }),
   z.object({ kind: z.literal('from-pr'), slug, pr: z.number().int().positive(), path: z.string().optional(), dryRun }),
   z.object({ kind: z.literal('file'), slug, path: z.string().min(1), dryRun }),
+  // A resume or cover letter PDF of an application the project's review queue lists.
+  z.object({ kind: z.literal('packet-file'), slug, id: z.string().min(1).max(200), file: z.enum(['resume', 'cover-letter']), dryRun }),
 ]);
 
 export type LaunchRequest = z.infer<typeof launchRequestSchema>;
@@ -57,7 +59,11 @@ export type LaunchLookup = {
   exists: (p: string) => boolean;
   /** Whether `file` is in the project's recently changed files (the only files the page can open). */
   recentFile?: (slug: string, file: string) => boolean;
+  /** The PDF for an application the project's review queue lists, inside the repo; or why there isn't one. */
+  packetFile?: (slug: string, id: string, file: 'resume' | 'cover-letter') => { path: string } | { error: string };
 };
+
+const PDF_APP = 'Preview';
 
 const PROJECT_URL = /^https:\/\/claude\.ai\/project\/([0-9a-f-]{36})\/?$/i;
 
@@ -133,6 +139,14 @@ export function planLaunch(req: LaunchRequest, look: LaunchLookup): LaunchPlan {
       if (!look.exists(req.path)) throw new LaunchError(409, `File no longer exists: ${req.path}`);
       // Always the editor, never the file's default app (which could run it).
       return { via: 'open', argv: ['open', '-a', EDITOR_APP, req.path] };
+    }
+    case 'packet-file': {
+      project(req.slug);
+      const found = look.packetFile?.(req.slug, req.id, req.file) ?? { error: 'This project has no review queue' };
+      if ('error' in found) throw new LaunchError(404, found.error);
+      if (!look.exists(found.path)) throw new LaunchError(409, `File no longer exists: ${found.path}`);
+      // Always Preview, never the file's default app.
+      return { via: 'open', argv: ['open', '-a', PDF_APP, found.path] };
     }
   }
 }

@@ -70,6 +70,11 @@ export function ProjectCard({ project: p, run, activity }: { project: ProjectDto
           )}
         </p>
       )}
+      {p.applications && (
+        <p className="mt-1 text-xs text-stone-600 dark:text-stone-400" data-testid="card-applications">
+          {p.applications.error ? <span className="text-amber-700">Applications: review_queue.yaml can't be read</span> : <>Applications: {p.applications.summary}</>}
+        </p>
+      )}
       <div className="mt-3">
         <ProjectActions project={p} run={run} />
       </div>

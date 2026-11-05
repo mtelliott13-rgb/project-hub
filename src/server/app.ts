@@ -20,6 +20,8 @@ import type { FileWatcher } from './files.ts';
 import { addLinkRoutes, projectFileFilter } from './link-routes.ts';
 import { buildTimeline, isStale, lastActivity, type ProjectActivity } from './activity.ts';
 import { addAgentRoutes } from './agent-routes.ts';
+import { addApplicationRoutes } from './application-routes.ts';
+import { findQueueFiles, packetFile as findPacketFile, PACKET_FILES, queueRoot, queueSummary, readQueue } from './applications.ts';
 import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
 import type { RepoPoller } from './repos.ts';
@@ -63,6 +65,8 @@ type AppDeps = DocDeps & {
   extensionId: string;
   /** The MCP server's read-only token (Phase 9); accepted on /agent/* only. */
   agentToken: string;
+  /** Where review_queue.yaml is backed up before the hub first writes to it each run. */
+  queueBackupDir: string;
 };
 
 /**
@@ -137,6 +141,7 @@ export function createApp(deps: AppDeps) {
         chats: filedChats.filter((ch) => ch.projectSlug === p.slug),
         repoStatus: p.repos.map((dir) => repos.get(dir)),
         toolkit: toolkitSummary(p),
+        applications: applicationsSummary(p),
       })),
     );
   });
@@ -195,6 +200,7 @@ export function createApp(deps: AppDeps) {
   addLinkRoutes(app, deps);
   addChatRoutes(app, deps);
   addAgentRoutes(app, deps);
+  addApplicationRoutes(app, deps);
 
   // The folder picker.
   app.get('/api/folders/suggestions', (c) => c.json(suggestions(db)));
@@ -256,6 +262,15 @@ export function createApp(deps: AppDeps) {
           claudeDesktopInstalled,
           exists: (p) => fs.existsSync(p),
           recentFile: (slug, file) => files.recent((f) => f === file && projectFileFilter(db, slug)(f), 1).length === 1,
+          packetFile: (slug, id, which) => {
+            const p = projectRow(slug);
+            const [queue] = p ? findQueueFiles(p) : [];
+            if (!queue) return { error: 'This project has no review queue' };
+            const item = readQueue(queue).items.find((i) => i.id === id);
+            if (!item) return { error: `"${id}" isn't in the review queue` };
+            const f = findPacketFile(queueRoot(queue), item.packet, PACKET_FILES[which]);
+            return f ? { path: f } : { error: `No ${PACKET_FILES[which]} inside ${item.packet ?? 'its packet folder'}` };
+          },
         });
       }
       const command = describePlan(plan);
@@ -371,5 +386,17 @@ export function createApp(deps: AppDeps) {
 }
 
 /** For cards: "3 of 16 done" (parked items don't count), or why the file can't be read. */
+/** "Applications: 2 drafts · 1 reviewed · 3 submitted" for a card, when the project has a review queue. */
+function applicationsSummary(p: { repos: string[]; folders: string[] }) {
+  const [file] = findQueueFiles(p);
+  if (!file) return null;
+  try {
+    const q = readQueue(file);
+    return { summary: queueSummary(q.counts), total: q.items.length, error: null };
+  } catch (e) {
+    return { summary: null, total: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export const injectToken = (html: string, uiToken: string) =>
   html.replace('</head>', `    <meta name="hub-token" content="${uiToken}" />\n  </head>`);
