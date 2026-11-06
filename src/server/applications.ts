@@ -9,9 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { APP_STATUSES, FITS, type AppStatus } from './queue-rules.ts';
+import { APP_STATUSES, FITS, limitFlags, type AppStatus, type LimitFlags } from './queue-rules.ts';
 
-export { APP_STATUSES, FITS, queueSummary, sortApplications, type AppStatus } from './queue-rules.ts';
+export { APP_STATUSES, FITS, limitFlags, queueSummary, sortApplications, type AppStatus, type LimitFlags } from './queue-rules.ts';
 
 /** Where Career HQ writes the queue, relative to its repo: the current place first, then the older one. */
 export const QUEUE_FILES = ['jobs/queue.yaml', 'jobs/queue/review_queue.yaml'] as const;
@@ -53,6 +53,8 @@ export type Application = {
   files: { resume: boolean; coverLetter: boolean; fillSheet: boolean };
   /** Missing required fields and the like, shown on the card. */
   problems: string[];
+  /** Fields over their limit and pending shorter drafts in its fill sheet (added by withLimits; null if unread). */
+  limits?: LimitFlags | null;
 };
 
 export type Queue = {
@@ -210,13 +212,26 @@ export type FieldCount = {
   length: number;
   /** The length Career HQ wrote (`chars`); differs from `length` only if the file is stale. */
   chars: number | null;
-  /** The form's limit (`max_chars`), if Career HQ gave one. */
+  /** The form's limit (`max_chars`), only when Career HQ knows it (no limit given means "unknown"). */
   max: number | null;
+  /** Over the limit: the hub's count is past `max`, or Career HQ says so (`over_limit`). */
+  over: boolean;
+  /** Career HQ's `over_limit` and the hub's own count disagree (the file may be stale). */
+  overStale: boolean;
 };
+
+/** A shorter version Career HQ drafted for an over-limit field. Not approved: shown as a suggestion, never copied. */
+export type ShorterDraft = { value: string; count: FieldCount; status: string };
+
+export function fieldCount(value: string, chars: number | null, max: number | null, fileSaysOver: boolean | null): FieldCount {
+  const length = charCount(value);
+  const countedOver = max !== null && length > max;
+  return { length, chars, max, over: countedOver || fileSaysOver === true, overStale: max !== null && fileSaysOver !== null && fileSaysOver !== countedOver };
+}
 
 export type FillPart =
   | { type: 'heading'; level: number; text: string }
-  | { type: 'field'; label: string; hint: string | null; value: string; missing: boolean; count?: FieldCount }
+  | { type: 'field'; label: string; hint: string | null; value: string; missing: boolean; count?: FieldCount; draft?: ShorterDraft }
   | { type: 'note'; text: string }
   | { type: 'text'; text: string };
 
@@ -264,7 +279,49 @@ export function parseFillSheet(md: string): { title: string | null; parts: FillP
       else parts.push({ type: 'text', text: line });
     }
   }
-  return { title, parts };
+  return { title, parts: mdLimits(parts) };
+}
+
+const DRAFT_LABEL = 'Shorter draft, pending your approval';
+
+/**
+ * fill_sheet.md writes limits as "(N / M characters max)" after a label,
+ * "(N characters)" for a counted field, an "**OVER THE LIMIT**" note, and a
+ * separate "Shorter draft, pending your approval" field. Turns those into the
+ * same counts and drafts the JSON gives, so the page shows them the same way.
+ */
+function mdLimits(parts: FillPart[]): FillPart[] {
+  const out: FillPart[] = [];
+  let last: Extract<FillPart, { type: 'field' }> | null = null;
+  for (const part of parts) {
+    if (part.type === 'note' && last?.count && /^\*\*OVER THE LIMIT\*\*/.test(part.text)) {
+      last.count = fieldCount(last.value, last.count.chars, last.count.max, true);
+      continue;
+    }
+    if (part.type === 'note' && last?.count?.max != null && /^No shorter version drafted yet/.test(part.text)) continue;
+    if (part.type !== 'field') {
+      if (part.type === 'heading') last = null;
+      out.push(part);
+      continue;
+    }
+    const limit = part.hint?.match(/^\((\d+) \/ (\d+) characters max\)\s*(.*)$/);
+    const counted = part.hint?.match(/^\((\d+) characters\)$/);
+    if (part.label === DRAFT_LABEL && last?.count?.max != null) {
+      const stillOver = /still over the limit/.test(limit?.[3] ?? '');
+      last.draft = { value: part.value, count: fieldCount(part.value, limit ? Number(limit[1]) : null, last.count.max, stillOver || null), status: 'pending approval' };
+      continue;
+    }
+    if (limit && !part.missing) {
+      part.count = fieldCount(part.value, Number(limit[1]), Number(limit[2]), null);
+      part.hint = limit[3].trim() || null;
+    } else if (counted && !part.missing) {
+      part.count = fieldCount(part.value, Number(counted[1]), null, null);
+      part.hint = null;
+    }
+    out.push(part);
+    last = part;
+  }
+  return out;
 }
 
 // fill_sheet.json, version 1. Unknown keys are ignored; an unknown `version`
@@ -292,6 +349,10 @@ const fillSheetJsonSchema = z.object({
             group: z.string().nullish(),
             chars: count.nullish(),
             max_chars: z.number().int().positive().nullish(),
+            over_limit: z.boolean().nullish(),
+            shorter_draft: z
+              .object({ value: z.string(), chars: count.nullish(), status: z.string().nullish(), over_limit: z.boolean().nullish() })
+              .nullish(),
           }),
         )
         .default([]),
@@ -342,7 +403,11 @@ export function parseFillSheetJson(text: string): { sheet: FillSheetJson; parts:
       }
       const missing = f.value === sheet.missing_marker;
       const field: FillPart = { type: 'field', label: f.label, hint: null, value: f.value, missing };
-      if (!missing && (f.chars != null || f.max_chars != null)) field.count = { length: charCount(f.value), chars: f.chars ?? null, max: f.max_chars ?? null };
+      if (!missing && (f.chars != null || f.max_chars != null || f.over_limit != null)) field.count = fieldCount(f.value, f.chars ?? null, f.max_chars ?? null, f.over_limit ?? (f.max_chars != null ? false : null));
+      if (f.shorter_draft) {
+        const d = f.shorter_draft;
+        field.draft = { value: d.value, count: fieldCount(d.value, d.chars ?? null, f.max_chars ?? null, d.over_limit ?? (f.max_chars != null ? false : null)), status: d.status ?? 'pending approval' };
+      }
       parts.push(field);
     }
     for (const group of new Set(section.notes.map((n) => n.group ?? null))) {
@@ -376,7 +441,11 @@ export function readFillSheet(file: string, id: string): FillSheet {
   const q = readQueue(file);
   const item = q.items.find((i) => i.id === id);
   if (!item) throw new QueueError(404, `"${id}" isn't in the review queue`);
-  const root = queueRoot(file);
+  return fillSheetFor(queueRoot(file), item);
+}
+
+function fillSheetFor(root: string, item: Application): FillSheet {
+  const id = item.id;
   const base = { id, company: item.company, role: item.title };
   let jsonProblem: string | null = null;
   const jsonFile = packetFile(root, item.packet, FILL_SHEET_JSON);
@@ -398,4 +467,17 @@ export function readFillSheet(file: string, id: string): FillSheet {
   const md = parseFillSheet(fs.readFileSync(mdFile, 'utf8'));
   const warnings = jsonProblem ? [`${jsonProblem}, so this is ${FILL_SHEET_MD} instead.`] : [];
   return { ...base, sheetTitle: md.title, source: 'md', generated: null, warnings, parts: md.parts };
+}
+
+/** Adds each item's over-limit and pending-draft counts, for the warning on its card. */
+export function withLimits<Q extends Queue>(q: Q): Q {
+  const root = queueRoot(q.file);
+  for (const item of q.items) {
+    try {
+      item.limits = item.files.fillSheet ? limitFlags(fillSheetFor(root, item).parts) : null;
+    } catch {
+      item.limits = null;
+    }
+  }
+  return q;
 }

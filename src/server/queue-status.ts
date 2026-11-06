@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { findQueueFiles, QueueError, queueRoot, readQueue, type Queue } from './applications.ts';
+import { findQueueFiles, QueueError, queueRoot, readQueue, withLimits, type Queue } from './applications.ts';
 import type { Project } from './db/schema.ts';
 import { shellQuote } from './launcher.ts';
 import { APP_STATUSES } from './queue-rules.ts';
@@ -154,7 +154,7 @@ export async function changeQueueStatus(req: QueueStatusRequest, deps: QueueStat
         body: { error: `The command finished, but the queue ${shown ? `still shows "${shown}"` : "couldn't be read afterwards"}`, output: run.output, command },
       };
     }
-    return { status: 200, body: { ok: true, command, output: run.output, queue: { ...now!, others: findQueueFiles(p).slice(1) } } };
+    return { status: 200, body: { ok: true, command, output: run.output, queue: { ...withLimits(now!), others: findQueueFiles(p).slice(1) } } };
   } finally {
     deps.running.delete(p.slug);
   }

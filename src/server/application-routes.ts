@@ -8,7 +8,7 @@ import type { Context, Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import type { Db } from './db/index.ts';
 import { projects } from './db/schema.ts';
-import { findQueueFiles, QueueError, readFillSheet, readQueue } from './applications.ts';
+import { findQueueFiles, QueueError, readFillSheet, readQueue, withLimits } from './applications.ts';
 
 export type ApplicationDeps = { db: Db };
 
@@ -30,7 +30,7 @@ export function addApplicationRoutes(app: Hono, { db }: ApplicationDeps) {
     const { file, others } = queueFile(c.req.param('slug'));
     if (!file) return c.json({ error: 'No review queue for this project' }, 404);
     try {
-      return c.json({ ...readQueue(file), others });
+      return c.json({ ...withLimits(readQueue(file)), others });
     } catch (e) {
       if (e instanceof QueueError) return c.json({ file, error: e.message });
       throw e;

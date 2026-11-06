@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findQueueFiles, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
+import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
+import { limitSummary } from '../src/server/queue-rules.ts';
 import { changeQueueStatus, copyCommand } from '../src/server/queue-status.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
@@ -164,7 +165,7 @@ describe('fill sheet', () => {
       { type: 'field', label: 'GitHub', hint: null, value: '[not in profile]', missing: true },
       { type: 'heading', level: 2, text: '5. Work experience' },
       { type: 'heading', level: 3, text: 'Example Co — Intern' },
-      { type: 'field', label: 'Description', hint: '(58 characters)', value: '- Built a dashboard\n- Cleaned survey data for 3 teams', missing: false },
+      { type: 'field', label: 'Description', hint: null, value: '- Built a dashboard\n- Cleaned survey data for 3 teams', missing: false, count: { length: 53, chars: 58, max: null, over: false, overStale: false } },
       { type: 'note', text: 'Role wording not approved yet.\nAsk before using it.' },
     ]);
   });
@@ -342,7 +343,7 @@ const SHEET_JSON = {
       notes: [],
       fields: [
         { label: 'Why us?', value: 'Because.', chars: 8, max_chars: 500 },
-        { label: 'In one line', value: 'x'.repeat(130), chars: 130, max_chars: 120 },
+        { label: 'In one line', value: 'x'.repeat(130), chars: 130, max_chars: 120, over_limit: true },
       ],
     },
     { heading: '10. Answer yourself', notes: [{ text: 'Salary expectations', group: null }, { text: 'References', group: 'Ask first' }], fields: [] },
@@ -362,14 +363,14 @@ describe('fill sheet JSON', () => {
       { type: 'heading', level: 3, text: 'Example Co — Intern' },
       { type: 'note', text: 'Wording not approved yet.' },
       { type: 'field', label: 'Employer', hint: null, value: 'Example Co', missing: false },
-      { type: 'field', label: 'Description', hint: null, value: '- Built a dashboard\n- Cleaned data', missing: false, count: { length: 34, chars: 34, max: null } },
+      { type: 'field', label: 'Description', hint: null, value: '- Built a dashboard\n- Cleaned data', missing: false, count: { length: 34, chars: 34, max: null, over: false, overStale: false } },
       { type: 'heading', level: 3, text: 'Other Ltd — Clerk' },
       { type: 'field', label: 'Employer', hint: null, value: 'Other Ltd', missing: false },
       // ✓ is one character, as Career HQ counts; the file's 99 is stale and shown as such.
-      { type: 'field', label: 'Description', hint: null, value: 'Filed things ✓', missing: false, count: { length: 14, chars: 99, max: null } },
+      { type: 'field', label: 'Description', hint: null, value: 'Filed things ✓', missing: false, count: { length: 14, chars: 99, max: null, over: false, overStale: false } },
       { type: 'heading', level: 2, text: '9. Job-specific questions' },
-      { type: 'field', label: 'Why us?', hint: null, value: 'Because.', missing: false, count: { length: 8, chars: 8, max: 500 } },
-      { type: 'field', label: 'In one line', hint: null, value: 'x'.repeat(130), missing: false, count: { length: 130, chars: 130, max: 120 } },
+      { type: 'field', label: 'Why us?', hint: null, value: 'Because.', missing: false, count: { length: 8, chars: 8, max: 500, over: false, overStale: false } },
+      { type: 'field', label: 'In one line', hint: null, value: 'x'.repeat(130), missing: false, count: { length: 130, chars: 130, max: 120, over: true, overStale: false } },
       { type: 'heading', level: 2, text: '10. Answer yourself' },
       { type: 'note', text: 'Salary expectations' },
       { type: 'heading', level: 3, text: 'Ask first' },
@@ -515,5 +516,96 @@ describe("status changes run Career HQ's command", () => {
     expect(copyCommand('/Users/me/career-hq', ID, 'submitted', '/Users/me')).toBe(`cd ~/career-hq && uv run python scripts/review_queue.py status ${ID} submitted`);
     expect(copyCommand('/Users/me/My Career', ID, 'draft', '/Users/me')).toBe(`cd ~/'My Career' && uv run python scripts/review_queue.py status ${ID} draft`);
     expect(copyCommand('/opt/career', ID, 'draft', '/Users/me')).toBe(`cd /opt/career && uv run python scripts/review_queue.py status ${ID} draft`);
+  });
+});
+
+describe('limits and shorter drafts', () => {
+  const field = (extra: object) => ({ label: 'Why us?', value: 'y'.repeat(60), chars: 60, max_chars: 50, over_limit: true, ...extra });
+  const sheet = (...fields: object[]) => JSON.stringify({ ...SHEET_JSON, sections: [{ heading: '9. Job-specific questions', notes: [], fields }] });
+  const fields = (text: string) => parseFillSheetJson(text).parts.filter((p) => p.type === 'field');
+
+  it('reads over_limit and shorter_draft: a draft that fits, one still over, and none yet', () => {
+    const [fits, stillOver, none, ok] = fields(
+      sheet(
+        field({ shorter_draft: { value: 'short', chars: 5, status: 'pending approval' } }),
+        field({ shorter_draft: { value: 'z'.repeat(55), chars: 55, status: 'pending approval', over_limit: true } }),
+        field({}),
+        { label: 'Fine', value: 'ok', chars: 2, max_chars: 50 },
+      ),
+    );
+    expect(fits).toMatchObject({ count: { length: 60, max: 50, over: true, overStale: false }, draft: { value: 'short', status: 'pending approval', count: { length: 5, max: 50, over: false, overStale: false } } });
+    expect(stillOver).toMatchObject({ draft: { count: { length: 55, max: 50, over: true, overStale: false } } });
+    expect(none).toMatchObject({ count: { over: true } });
+    expect(none).not.toHaveProperty('draft');
+    expect(ok).toMatchObject({ count: { over: false, overStale: false } });
+    expect(ok).not.toHaveProperty('draft');
+    expect(limitFlags(parseFillSheetJson(sheet(field({ shorter_draft: { value: 'a', chars: 1, status: 'pending approval' } }), field({}))).parts)).toEqual({ over: 2, drafts: 1 });
+    expect(limitSummary({ over: 2, drafts: 1 })).toBe('2 fields over their limit · 1 shorter draft pending your approval');
+    expect(limitSummary({ over: 1, drafts: 0 })).toBe('1 field over its limit');
+    expect(limitSummary({ over: 0, drafts: 0 })).toBeNull();
+  });
+
+  it("Career HQ's flag and the hub's count disagreeing is flagged; over_limit alone still counts as over", () => {
+    const [saysOverButFits, saysFineButOver, flagOnly] = fields(
+      sheet({ label: 'A', value: 'abc', chars: 3, max_chars: 50, over_limit: true }, { label: 'B', value: 'b'.repeat(60), chars: 60, max_chars: 50 }, { label: 'C', value: 'c', chars: 1, over_limit: true }),
+    );
+    expect(saysOverButFits).toMatchObject({ count: { over: true, overStale: true } });
+    expect(saysFineButOver).toMatchObject({ count: { over: true, overStale: true } });
+    expect(flagOnly).toMatchObject({ count: { max: null, over: true, overStale: false } });
+  });
+
+  it('fill_sheet.md shows the same: limits, the OVER THE LIMIT note and the pending draft become counts and a draft', () => {
+    const md = [
+      '## 9. Job-specific questions',
+      '',
+      '**Why us?** (60 / 50 characters max)',
+      '```',
+      'y'.repeat(60),
+      '```',
+      '',
+      "> **OVER THE LIMIT** by 10 characters. Don't paste the version above as-is.",
+      '',
+      '**Shorter draft, pending your approval** (55 / 50 characters max) **still over the limit**',
+      '```',
+      'z'.repeat(55),
+      '```',
+      '',
+      '**Why now?** (70 / 50 characters max)',
+      '```',
+      'w'.repeat(70),
+      '```',
+      '',
+      "> **OVER THE LIMIT** by 20 characters. Don't paste the version above as-is.",
+      '> No shorter version drafted yet. Ask for one (same facts, fewer words).',
+      '',
+      '**Fine** (2 / 50 characters max)',
+      '```',
+      'ok',
+      '```',
+    ].join('\n');
+    expect(parseFillSheet(md).parts).toEqual([
+      { type: 'heading', level: 2, text: '9. Job-specific questions' },
+      {
+        type: 'field', label: 'Why us?', hint: null, value: 'y'.repeat(60), missing: false,
+        count: { length: 60, chars: 60, max: 50, over: true, overStale: false },
+        draft: { value: 'z'.repeat(55), status: 'pending approval', count: { length: 55, chars: 55, max: 50, over: true, overStale: false } },
+      },
+      { type: 'field', label: 'Why now?', hint: null, value: 'w'.repeat(70), missing: false, count: { length: 70, chars: 70, max: 50, over: true, overStale: false } },
+      { type: 'field', label: 'Fine', hint: null, value: 'ok', missing: false, count: { length: 2, chars: 2, max: 50, over: false, overStale: false } },
+    ]);
+  });
+
+  it("the application's card carries the counts, from the API and after a status change", async () => {
+    const { call, acme } = setup({ mode: 'ok', after: QUEUE.replace('status: "draft"', 'status: "reviewed"') });
+    fs.writeFileSync(path.join(acme, 'fill_sheet.json'), sheet(field({ shorter_draft: { value: 'short', chars: 5, status: 'pending approval' } }), field({})));
+    const q = (await call('GET', '/api/projects/career/applications')).body;
+    expect(q.items[0].limits).toEqual({ over: 2, drafts: 1 });
+    expect(q.items[1].limits).toBeNull();
+    const res = await call('POST', '/api/launch', { kind: 'queue-status', slug: 'career', id: q.items[0].id, status: 'reviewed', version: q.version });
+    expect(res.body.queue.items[0].limits).toEqual({ over: 2, drafts: 1 });
+    // Still nothing for the MCP tools.
+    for (const agent of ['/agent/v1/projects', '/agent/v1/projects/career']) {
+      expect(JSON.stringify((await call('GET', agent, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/limits|draft|over_limit|Why us/i);
+    }
   });
 });

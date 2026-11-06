@@ -9,7 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { useState, type MouseEvent } from 'react';
-import { APP_STATUSES, queueSummary, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
+import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
 import { fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FieldCount, type FillPart, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import type { SectionProps } from './sections.tsx';
@@ -97,6 +97,11 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
       </div>
       {app.notes && <p className="mt-1 text-sm whitespace-pre-line text-stone-600 dark:text-stone-400">{app.notes}</p>}
       {app.problems.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {app.problems.join(' · ')}</p>}
+      {app.limits && limitSummary(app.limits) && (
+        <p className={`mt-1 text-xs font-medium ${app.limits.over ? 'text-red-600 dark:text-red-400' : 'text-violet-700 dark:text-violet-300'}`} data-testid="limit-flags">
+          ⚠ Fill sheet: {limitSummary(app.limits)}
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <select
           aria-label={`Status of ${app.company} ${app.title}`}
@@ -245,7 +250,7 @@ function Notice({ notice }: { notice: { ok: boolean; text: string; output?: stri
   );
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function CopyButton({ value, label, anyway = false }: { value: string; label: string; anyway?: boolean }) {
   const [copied, setCopied] = useState<boolean | 'failed'>(false);
   const copy = () =>
     navigator.clipboard.writeText(value).then(
@@ -259,11 +264,12 @@ function CopyButton({ value, label }: { value: string; label: string }) {
     <button
       type="button"
       onClick={copy}
-      aria-label={`Copy ${label}`}
-      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-stone-300 px-2 text-xs hover:border-stone-500 dark:border-stone-700"
+      aria-label={anyway ? `Copy ${label} anyway (over the limit)` : `Copy ${label}`}
+      title={anyway ? "Over the form's limit: copy it only to trim it yourself" : undefined}
+      className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs whitespace-nowrap ${anyway ? 'border-red-400 text-red-700 hover:border-red-600 dark:border-red-700 dark:text-red-300' : 'border-stone-300 hover:border-stone-500 dark:border-stone-700'}`}
     >
       {copied === true ? <Check size={12} className="text-green-600" aria-hidden /> : <Copy size={12} aria-hidden />}
-      {copied === true ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy'}
+      {copied === true ? 'Copied' : copied === 'failed' ? 'Copy failed' : anyway ? 'Copy anyway' : 'Copy'}
     </button>
   );
 }
@@ -280,9 +286,14 @@ function Part({ part }: { part: FillPart }) {
       return <p className="rounded-md bg-amber-50 px-2 py-1 text-xs whitespace-pre-line text-amber-800 dark:bg-amber-950 dark:text-amber-300">{part.text}</p>;
     case 'text':
       return <p className="text-xs whitespace-pre-line text-stone-500">{part.text.replace(/`/g, '')}</p>;
-    case 'field':
+    case 'field': {
+      const over = !!part.count?.over;
       return (
-        <div className="flex items-start gap-2 py-1" data-testid="fill-field">
+        <div
+          className={`flex items-start gap-2 py-1 ${over ? 'my-1 rounded-md border border-red-300 bg-red-50/60 px-2 py-2 dark:border-red-900 dark:bg-red-950/40' : ''}`}
+          data-testid="fill-field"
+          data-flag={over || part.draft ? '' : undefined}
+        >
           <div className="min-w-0 flex-1">
             <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-stone-500">
               <span>
@@ -298,28 +309,83 @@ function Part({ part }: { part: FillPart }) {
             ) : (
               <pre className="font-sans text-sm break-words whitespace-pre-wrap">{part.value || '(blank)'}</pre>
             )}
+            {over && part.count && (
+              <div className="mt-1.5 space-y-0.5 text-xs text-red-700 dark:text-red-300" data-testid="over-limit" role="note">
+                <p className="flex items-center gap-1 font-medium">
+                  <AlertTriangle size={13} aria-hidden />
+                  {part.count.max !== null && part.count.length > part.count.max
+                    ? `Over the limit by ${part.count.length - part.count.max} characters (${part.count.length} / ${part.count.max}). Don't paste this as-is.`
+                    : "Career HQ marks this over the form's limit. Don't paste this as-is."}
+                </p>
+                {!part.draft && <p>No shorter version drafted yet. Ask Career HQ for one (same facts, fewer words).</p>}
+              </div>
+            )}
+            {part.draft && <DraftBox draft={part.draft} />}
           </div>
-          {!part.missing && <CopyButton value={part.value} label={part.label} />}
+          {!part.missing && <CopyButton value={part.value} label={part.label} anyway={over} />}
         </div>
       );
+    }
   }
+}
+
+/** A pending shorter draft: a suggestion with its own count. No Copy button; Career HQ makes it the value once approved. */
+function DraftBox({ draft }: { draft: NonNullable<Extract<FillPart, { type: 'field' }>['draft']> }) {
+  const { count } = draft;
+  const fits = count.max !== null && !count.over;
+  return (
+    <div className="mt-2 rounded-md border border-dashed border-violet-400 bg-violet-50/70 px-2.5 py-2 dark:border-violet-700 dark:bg-violet-950/40" data-testid="shorter-draft">
+      <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-violet-800 dark:text-violet-300">
+        <span>Shorter draft, pending your approval</span>
+        <span className={`tabular-nums ${count.over ? 'text-red-600 dark:text-red-400' : ''}`} data-testid="draft-count">
+          {count.max !== null ? `${count.length} / ${count.max}` : `${count.length} chars`}
+          {fits && ' ✓'}
+          {count.over && count.max !== null && ` · still over by ${count.length - count.max}`}
+          {count.over && count.max === null && ' · still over the limit'}
+        </span>
+      </p>
+      <p className="mt-1 text-sm break-words whitespace-pre-wrap text-stone-800 select-text dark:text-stone-200">{draft.value}</p>
+      <p className="mt-1 text-xs text-violet-700/80 dark:text-violet-300/80">Not approved yet. Approve it in Career HQ to make it the value.</p>
+    </div>
+  );
 }
 
 /** "300 chars", or "484 / 500" against the form's limit, red when over; flagged if the file's own count is stale. */
 function CharCount({ count }: { count: FieldCount }) {
-  const over = count.max !== null && count.length > count.max;
+  const over = count.over;
   const stale = count.chars !== null && count.chars !== count.length;
   return (
     <span
       data-testid="char-count"
       data-over={over || undefined}
       className={`tabular-nums ${over ? 'font-medium text-red-600 dark:text-red-400' : 'text-stone-400'}`}
-      title={over ? `${count.length - count.max!} characters over the form's ${count.max}-character limit` : count.max !== null ? `The form allows ${count.max} characters` : 'Character count'}
+      title={over && count.max !== null ? `${count.length - count.max} characters over the form's ${count.max}-character limit` : count.max !== null ? `The form allows ${count.max} characters` : 'Character count (limit unknown)'}
     >
       {count.max !== null ? `${count.length} / ${count.max}` : `${count.length} chars`}
-      {over && ` · ${count.length - count.max!} over`}
-      {stale && <span className="ml-1 text-amber-600" title={`fill_sheet.json says ${count.chars}; the value has ${count.length}`}>(file says {count.chars})</span>}
+      {over && count.max !== null && count.length > count.max && ` · ${count.length - count.max} over`}
+      {stale && <span className="ml-1 text-amber-600" title={`The fill sheet says ${count.chars}; the value has ${count.length}`}>(file says {count.chars})</span>}
+      {count.overStale && <span className="ml-1 text-amber-600" title="Career HQ's over-the-limit flag doesn't match the count; the file may be stale">(over-limit flag doesn't match)</span>}
     </span>
+  );
+}
+
+/** At the top of a sheet: what's over its limit and what's waiting for approval; clicking jumps to the first one. */
+function LimitBanner({ parts }: { parts: FillPart[] }) {
+  const flags = limitFlags(parts);
+  const text = limitSummary(flags);
+  if (!text) return null;
+  const jump = (e: MouseEvent<HTMLButtonElement>) =>
+    e.currentTarget.closest('[data-testid=fill-sheet]')?.querySelector('[data-flag]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return (
+    <button
+      type="button"
+      onClick={jump}
+      data-testid="limit-banner"
+      className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm font-medium ${flags.over ? 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-300' : 'bg-violet-50 text-violet-800 dark:bg-violet-950 dark:text-violet-300'}`}
+    >
+      <AlertTriangle size={14} aria-hidden /> {text}
+      <span className="ml-auto text-xs font-normal underline">Show</span>
+    </button>
   );
 }
 
@@ -341,6 +407,7 @@ function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application
             ⚠ {w}
           </p>
         ))}
+        {sheet.data && <LimitBanner parts={sheet.data.parts} />}
         {sheet.data?.parts.map((p, i) => <Part key={i} part={p} />)}
       </div>
       <div className="mt-4 flex justify-end">

@@ -19,3 +19,22 @@ export function sortApplications<T extends { status: string; deadline: string | 
     (a, b) => rank(a.status) - rank(b.status) || (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999') || (b.added ?? '').localeCompare(a.added ?? ''),
   );
 }
+
+/** How many fields are over their limit, and how many shorter drafts wait for approval. */
+export type LimitFlags = { over: number; drafts: number };
+export function limitFlags(parts: readonly { type: string; count?: { over: boolean }; draft?: unknown }[]): LimitFlags {
+  let over = 0;
+  let drafts = 0;
+  for (const p of parts) {
+    if (p.type !== 'field') continue;
+    if (p.count?.over) over++;
+    if (p.draft) drafts++;
+  }
+  return { over, drafts };
+}
+
+/** "2 fields over their limit · 1 shorter draft pending your approval", or null when there's nothing. */
+export function limitSummary({ over, drafts }: LimitFlags): string | null {
+  const bits = [over && `${over} field${over === 1 ? '' : 's'} over ${over === 1 ? 'its' : 'their'} limit`, drafts && `${drafts} shorter draft${drafts === 1 ? '' : 's'} pending your approval`].filter(Boolean);
+  return bits.length ? bits.join(' · ') : null;
+}
