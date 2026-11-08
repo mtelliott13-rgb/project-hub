@@ -100,7 +100,13 @@ Rules:
   - An over-limit field gets a red box, an "Over the limit by N… Don't paste this as-is" line and a red "Copy anyway" button, plus "No shorter version drafted yet" when there's no draft.
   - A pending draft shows under its field in a dashed violet box with its own count ("✓" when it fits, "still over by N" when not). It has **no** Copy button: it isn't approved until Career HQ makes it the value.
   - The sheet opens with a summary line ("2 fields over their limit · 1 shorter draft pending your approval") that jumps to the first one, and each application's card shows the same. `limitFlags` / `limitSummary` live in `queue-rules.ts`; `withLimits` adds the counts to the queue answer.
-  - Career HQ has no approve-draft command yet, so there's no Approve button.
+- **Approve** (a pending draft with Career HQ's `question` number that fits a known `max_chars`; never a draft that's still over, or one from the Markdown fallback) runs `uv run python scripts/review_queue.py approve-draft <id> <question> <sha256>`. It goes through `POST /api/launch` kind `approve-draft` with the same runner and checks as `status` (`queue-status.ts`):
+  - `question` must be a JSON integer 1–9999, so it is always plain digits with no leading zero
+  - `sha256` must be 64 lowercase hex characters
+  - status changes and approvals share one lock per project
+- **The page computes the hash** (`sha256Hex` in `queue-rules.ts`, Web Crypto) from the draft string exactly as it received and showed it. The server never re-reads the file for it, so Career HQ refuses a draft that changed after the page loaded.
+- Success needs exit 0 *and* the fill sheet no longer showing that question's draft. The page shows Career HQ's one line; on failure, its `error:` line plus the command to copy. Either way the sheet and card reload, and nothing retries. Every Approve button is disabled while one runs.
+- Tested live only on a scratch copy of Career HQ's scripts with its fictional sample packet. Never approve a draft in a real packet without asking the user.
 - PDFs: launch kind `packet-file` (slug, id, `resume` | `cover-letter`) opens a PDF in Preview (never the default app), only for an id the queue lists and only if the file resolves, symlinks followed, inside the repo holding the queue.
 - Private: queue, fill-sheet and status answers are `no-store` and page-token only. They are never exposed through `/agent` or the MCP tools (tested). Tests use made-up data only.
 

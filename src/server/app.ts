@@ -29,7 +29,7 @@ import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
-import { changeQueueStatus, queueStatusSchema } from './queue-status.ts';
+import { approveDraft, approveDraftSchema, changeQueueStatus, queueStatusSchema } from './queue-status.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
 import type { ProjectStore } from './project-store.ts';
 import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
@@ -104,7 +104,7 @@ export function createApp(deps: AppDeps) {
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
-  // Projects with Career HQ's status command running now.
+  // Projects with a Career HQ command (status or approve-draft) running now.
   const queueRuns = new Set<string>();
   const app = new Hono();
 
@@ -247,12 +247,14 @@ export function createApp(deps: AppDeps) {
 
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
-    // An application's status: runs Career HQ's own command and reports its result.
-    if ((body as { kind?: unknown } | null)?.kind === 'queue-status') {
-      const queueReq = queueStatusSchema.safeParse(body);
-      if (!queueReq.success) return c.json({ error: `bad status request: ${queueReq.error.issues[0].path.join('.')} ${queueReq.error.issues[0].message}` }, 400);
-      const result = await changeQueueStatus(queueReq.data, { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns });
-      if (result.status === 200 && !queueReq.data.dryRun) feed.notify();
+    // An application's status, or approving a shorter draft: runs Career HQ's own command and reports its result.
+    const kind = (body as { kind?: unknown } | null)?.kind;
+    if (kind === 'queue-status' || kind === 'approve-draft') {
+      const careerDeps = { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns };
+      const parsed = kind === 'queue-status' ? queueStatusSchema.safeParse(body) : approveDraftSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: `bad ${kind} request: ${parsed.error.issues[0].path.join('.')} ${parsed.error.issues[0].message}` }, 400);
+      const result = parsed.data.kind === 'queue-status' ? await changeQueueStatus(parsed.data, careerDeps) : await approveDraft(parsed.data, careerDeps);
+      if (result.status === 200 && !parsed.data.dryRun) feed.notify();
       c.header('Cache-Control', 'no-store');
       return c.json(result.body, result.status);
     }

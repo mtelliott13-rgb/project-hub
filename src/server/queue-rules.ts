@@ -38,3 +38,13 @@ export function limitSummary({ over, drafts }: LimitFlags): string | null {
   const bits = [over && `${over} field${over === 1 ? '' : 's'} over ${over === 1 ? 'its' : 'their'} limit`, drafts && `${drafts} shorter draft${drafts === 1 ? '' : 's'} pending your approval`].filter(Boolean);
   return bits.length ? bits.join(' · ') : null;
 }
+
+/**
+ * Lowercase hex SHA-256 of a string's UTF-8 bytes, as Career HQ's approve-draft
+ * expects. The page hashes the draft exactly as it received and showed it.
+ * Uses Web Crypto, which both the page (127.0.0.1 is a secure context) and Node have.
+ */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}

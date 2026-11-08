@@ -221,7 +221,14 @@ export type FieldCount = {
 };
 
 /** A shorter version Career HQ drafted for an over-limit field. Not approved: shown as a suggestion, never copied. */
-export type ShorterDraft = { value: string; count: FieldCount; status: string };
+export type ShorterDraft = {
+  /** Exactly as Career HQ wrote it; the page hashes this string for approve-draft. */
+  value: string;
+  count: FieldCount;
+  status: string;
+  /** The answers.yaml question number approve-draft takes (JSON only; null means it can't be approved from the hub). */
+  question: number | null;
+};
 
 export function fieldCount(value: string, chars: number | null, max: number | null, fileSaysOver: boolean | null): FieldCount {
   const length = charCount(value);
@@ -308,7 +315,7 @@ function mdLimits(parts: FillPart[]): FillPart[] {
     const counted = part.hint?.match(/^\((\d+) characters\)$/);
     if (part.label === DRAFT_LABEL && last?.count?.max != null) {
       const stillOver = /still over the limit/.test(limit?.[3] ?? '');
-      last.draft = { value: part.value, count: fieldCount(part.value, limit ? Number(limit[1]) : null, last.count.max, stillOver || null), status: 'pending approval' };
+      last.draft = { value: part.value, count: fieldCount(part.value, limit ? Number(limit[1]) : null, last.count.max, stillOver || null), status: 'pending approval', question: null };
       continue;
     }
     if (limit && !part.missing) {
@@ -351,7 +358,7 @@ const fillSheetJsonSchema = z.object({
             max_chars: z.number().int().positive().nullish(),
             over_limit: z.boolean().nullish(),
             shorter_draft: z
-              .object({ value: z.string(), chars: count.nullish(), status: z.string().nullish(), over_limit: z.boolean().nullish() })
+              .object({ question: z.number().int().positive().nullish(), value: z.string(), chars: count.nullish(), status: z.string().nullish(), over_limit: z.boolean().nullish() })
               .nullish(),
           }),
         )
@@ -406,7 +413,7 @@ export function parseFillSheetJson(text: string): { sheet: FillSheetJson; parts:
       if (!missing && (f.chars != null || f.max_chars != null || f.over_limit != null)) field.count = fieldCount(f.value, f.chars ?? null, f.max_chars ?? null, f.over_limit ?? (f.max_chars != null ? false : null));
       if (f.shorter_draft) {
         const d = f.shorter_draft;
-        field.draft = { value: d.value, count: fieldCount(d.value, d.chars ?? null, f.max_chars ?? null, d.over_limit ?? (f.max_chars != null ? false : null)), status: d.status ?? 'pending approval' };
+        field.draft = { value: d.value, count: fieldCount(d.value, d.chars ?? null, f.max_chars ?? null, d.over_limit ?? (f.max_chars != null ? false : null)), status: d.status ?? 'pending approval', question: d.question ?? null };
       }
       parts.push(field);
     }
@@ -444,7 +451,7 @@ export function readFillSheet(file: string, id: string): FillSheet {
   return fillSheetFor(queueRoot(file), item);
 }
 
-function fillSheetFor(root: string, item: Application): FillSheet {
+export function fillSheetFor(root: string, item: Application): FillSheet {
   const id = item.id;
   const base = { id, company: item.company, role: item.title };
   let jsonProblem: string | null = null;

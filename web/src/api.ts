@@ -4,7 +4,7 @@ import type { Chat, Link, LinkRule, Project, Session } from '../../src/server/db
 import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { ActivityEvent, ProjectActivity } from '../../src/server/activity.ts';
-import type { Application, FieldCount, FillPart, FillSheet, Queue } from '../../src/server/applications.ts';
+import type { Application, FieldCount, FillPart, FillSheet, Queue, ShorterDraft } from '../../src/server/applications.ts';
 import type { AppStatus } from '../../src/server/queue-rules.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
@@ -173,7 +173,7 @@ export const fetchTimeline = (slug: string, limit: number) =>
 
 // Applications: Career HQ's review queue and fill sheets (read only; status
 // changes run Career HQ's own command through /api/launch).
-export type { Application, FieldCount, FillPart, FillSheet };
+export type { Application, FieldCount, FillPart, FillSheet, ShorterDraft };
 /** The queue plus any other queue files found but not shown (the newer one wins). */
 export type ShownQueue = Queue & { others: string[] };
 export type QueueResponse = ShownQueue | { file: string; error: string };
@@ -187,3 +187,11 @@ export const fetchFillSheet = (slug: string, id: string) => hub<FillSheet>(`/api
  */
 export const setApplicationStatus = (slug: string, id: string, status: AppStatus, version: string) =>
   hub<{ command: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'queue-status', slug, id, status, version } });
+
+/**
+ * Runs Career HQ's approve-draft for one pending shorter draft. `sha256` is of
+ * the draft exactly as the page showed it. On failure the HubError's body has
+ * `command` (to copy) and `output`.
+ */
+export const approveShorterDraft = (slug: string, id: string, question: number, sha256: string) =>
+  hub<{ command: string; message: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'approve-draft', slug, id, question, sha256 } });

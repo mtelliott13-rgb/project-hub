@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
-import { limitSummary } from '../src/server/queue-rules.ts';
-import { changeQueueStatus, copyCommand } from '../src/server/queue-status.ts';
+import { limitSummary, sha256Hex } from '../src/server/queue-rules.ts';
+import { approveDraft, changeQueueStatus, copyCommand } from '../src/server/queue-status.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
@@ -174,7 +174,9 @@ describe('fill sheet', () => {
 /**
  * A stand-in for uv: records its folder, arguments and environment, then acts
  * by the `mode` file next to it (ok: puts after.yaml in place as the queue;
- * fail: exits 1 with a message; noop: changes nothing; slow: sleeps).
+ * fail: exits 1 with a message; noop: changes nothing; slow: sleeps;
+ * approve: puts after.json in place at the path in `target` and prints Career
+ * HQ's one line; refuse: prints an "error:" line and exits 2).
  */
 const FAKE_UV = `#!/bin/sh
 d=$(dirname "$0")
@@ -185,20 +187,23 @@ case $(cat "$d/mode") in
   fail) echo "starting" ; echo "No packet for that id" >&2; exit 1;;
   noop) echo "nothing to do";;
   slow) sleep 5;;
+  approve) cp "$d/after.json" "$(cat "$d/target")"; echo "$5 question $6: draft approved (5 / 50 characters)";;
+  refuse) echo "checking" ; echo "error: the draft for question $6 has changed since it was shown; reload and try again" >&2; exit 2;;
 esac
 `;
 
-function fakeUv(root: string, mode: 'ok' | 'fail' | 'noop' | 'slow', after?: string) {
+type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse';
+function fakeUv(root: string, mode: FakeMode, after?: string) {
   const bin = path.join(root, 'fake-bin');
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, 'uv'), FAKE_UV, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'mode'), mode);
   if (after !== undefined) fs.writeFileSync(path.join(bin, 'after.yaml'), after);
   const read = (f: string) => fs.readFileSync(path.join(bin, f), 'utf8');
-  return { uv: path.join(bin, 'uv'), args: () => read('args').trimEnd().split('\n'), env: () => read('env'), ran: () => fs.existsSync(path.join(bin, 'args')) };
+  return { bin, uv: path.join(bin, 'uv'), args: () => read('args').trimEnd().split('\n'), env: () => read('env'), ran: () => fs.existsSync(path.join(bin, 'args')) };
 }
 
-function setup(withUv?: { mode: 'ok' | 'fail' | 'noop' | 'slow'; after?: string; script?: boolean }) {
+function setup(withUv?: { mode: FakeMode; after?: string; script?: boolean }) {
   const r = repo();
   if (withUv?.script !== false) {
     fs.mkdirSync(path.join(r.career, 'scripts'), { recursive: true });
@@ -513,9 +518,9 @@ describe("status changes run Career HQ's command", () => {
   });
 
   it('the copyable command uses ~ and quotes odd folder names', () => {
-    expect(copyCommand('/Users/me/career-hq', ID, 'submitted', '/Users/me')).toBe(`cd ~/career-hq && uv run python scripts/review_queue.py status ${ID} submitted`);
-    expect(copyCommand('/Users/me/My Career', ID, 'draft', '/Users/me')).toBe(`cd ~/'My Career' && uv run python scripts/review_queue.py status ${ID} draft`);
-    expect(copyCommand('/opt/career', ID, 'draft', '/Users/me')).toBe(`cd /opt/career && uv run python scripts/review_queue.py status ${ID} draft`);
+    expect(copyCommand('/Users/me/career-hq', ['status', ID, 'submitted'], '/Users/me')).toBe(`cd ~/career-hq && uv run python scripts/review_queue.py status ${ID} submitted`);
+    expect(copyCommand('/Users/me/My Career', ['status', ID, 'draft'], '/Users/me')).toBe(`cd ~/'My Career' && uv run python scripts/review_queue.py status ${ID} draft`);
+    expect(copyCommand('/opt/career', ['status', ID, 'draft'], '/Users/me')).toBe(`cd /opt/career && uv run python scripts/review_queue.py status ${ID} draft`);
   });
 });
 
@@ -588,7 +593,7 @@ describe('limits and shorter drafts', () => {
       {
         type: 'field', label: 'Why us?', hint: null, value: 'y'.repeat(60), missing: false,
         count: { length: 60, chars: 60, max: 50, over: true, overStale: false },
-        draft: { value: 'z'.repeat(55), status: 'pending approval', count: { length: 55, chars: 55, max: 50, over: true, overStale: false } },
+        draft: { value: 'z'.repeat(55), status: 'pending approval', question: null, count: { length: 55, chars: 55, max: 50, over: true, overStale: false } },
       },
       { type: 'field', label: 'Why now?', hint: null, value: 'w'.repeat(70), missing: false, count: { length: 70, chars: 70, max: 50, over: true, overStale: false } },
       { type: 'field', label: 'Fine', hint: null, value: 'ok', missing: false, count: { length: 2, chars: 2, max: 50, over: false, overStale: false } },
@@ -606,6 +611,98 @@ describe('limits and shorter drafts', () => {
     // Still nothing for the MCP tools.
     for (const agent of ['/agent/v1/projects', '/agent/v1/projects/career']) {
       expect(JSON.stringify((await call('GET', agent, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/limits|draft|over_limit|Why us/i);
+    }
+  });
+});
+
+describe('approving a shorter draft', () => {
+  const ID = '2026-11-03-acme-energy-data-analyst-intern';
+  const DRAFT = 'Short.\n  Kept as-is ✓ ';
+  const withDraft = (draft: object) =>
+    JSON.stringify({
+      ...SHEET_JSON,
+      sections: [
+        {
+          heading: '9. Job-specific questions',
+          notes: [],
+          fields: [
+            { label: 'Why us?', value: 'y'.repeat(60), chars: 60, max_chars: 50, over_limit: true, shorter_draft: { question: 2, value: DRAFT, chars: [...DRAFT].length, status: 'pending approval', ...draft } },
+          ],
+        },
+      ],
+    });
+  const APPROVED = JSON.stringify({ ...SHEET_JSON, sections: [{ heading: '9. Job-specific questions', notes: [], fields: [{ label: 'Why us?', value: DRAFT, chars: [...DRAFT].length, max_chars: 50 }] }] });
+  async function ready(mode: FakeMode) {
+    const s = setup({ mode, after: undefined });
+    fs.writeFileSync(path.join(s.acme, 'fill_sheet.json'), withDraft({}));
+    fs.writeFileSync(path.join(s.fake!.bin, 'after.json'), APPROVED);
+    fs.writeFileSync(path.join(s.fake!.bin, 'target'), path.join(s.acme, 'fill_sheet.json'));
+    const sheet = (await s.call('GET', `/api/projects/career/applications/${ID}/fill-sheet`)).body;
+    const draft = sheet.parts.find((p: { draft?: unknown }) => p.draft).draft;
+    return { ...s, draft, sha: await sha256Hex(draft.value) };
+  }
+  const body = (sha: string, extra: object = {}) => ({ kind: 'approve-draft', slug: 'career', id: ID, question: 2, sha256: sha, ...extra });
+
+  it("the page's hash is SHA-256 of the exact UTF-8 bytes: newlines, spaces and non-ASCII kept", async () => {
+    const crypto = await import('node:crypto');
+    for (const text of [DRAFT, 'a\r\nb\n', '  padded  ', 'émoji 🚀 — dash', '']) {
+      expect(await sha256Hex(text)).toBe(crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'));
+    }
+  });
+
+  it('reads the question number; only JSON drafts carry one', async () => {
+    const { draft } = await ready('approve');
+    expect(draft).toEqual({ value: DRAFT, question: 2, status: 'pending approval', count: { length: [...DRAFT].length, chars: [...DRAFT].length, max: 50, over: false, overStale: false } });
+    expect(parseFillSheetJson(withDraft({ question: undefined })).parts.find((p) => p.type === 'field' && p.draft)).toMatchObject({ draft: { question: null } });
+  });
+
+  it('dryRun shows the exact command; a run passes separate arguments, then reports the one line and the reloaded queue', async () => {
+    const { call, career, fake, sha, acme } = await ready('approve');
+    const dry = await call('POST', '/api/launch', body(sha, { dryRun: true }));
+    expect(dry.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'approve-draft', ID, '2', sha] });
+    expect(dry.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py approve-draft ${ID} 2 ${sha}`);
+    expect(fake!.ran()).toBe(false);
+    const res = await call('POST', '/api/launch', body(sha));
+    expect(res.status).toBe(200);
+    expect(res.cache).toBe('no-store');
+    expect(res.body.message).toBe(`${ID} question 2: draft approved (5 / 50 characters)`);
+    expect(res.body.queue.items[0].limits).toEqual({ over: 0, drafts: 0 });
+    expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'approve-draft', ID, '2', sha]);
+    expect(fs.readFileSync(path.join(acme, 'fill_sheet.json'), 'utf8')).toBe(APPROVED);
+  });
+
+  it('a refusal shows its error: line and the command to copy; a run that leaves the draft is a failure', async () => {
+    const { call, sha } = await ready('refuse');
+    const res = await call('POST', '/api/launch', body(sha));
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('error: the draft for question 2 has changed since it was shown; reload and try again (exit 2)');
+    expect(res.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py approve-draft ${ID} 2 ${sha}`);
+    const noop = await ready('noop');
+    const res2 = await noop.call('POST', '/api/launch', body(noop.sha));
+    expect(res2.status).toBe(500);
+    expect(res2.body.error).toMatch(/still shows that draft/);
+  });
+
+  it('refuses before running: odd ids, question numbers and hashes, unknown ids, no Origin or token, one already running', async () => {
+    const { call, fake, sha, root, career } = await ready('approve');
+    const post = (b: object, headers?: Record<string, string>) => call('POST', '/api/launch', b, headers);
+    for (const id of ['../x', '2026-11-03-acme/', '2026-11-03-Acme', '2026-11-03-acme ', 'x;rm -rf ~']) expect((await post(body(sha, { id }))).status).toBe(400);
+    for (const question of [0, -1, 1.5, '2', '02', '²', 10000, null]) expect((await post(body(sha, { question }))).status).toBe(400);
+    for (const s of [sha.toUpperCase(), sha.slice(1), `${sha}0`, 'z'.repeat(64), '']) expect((await post(body(s))).status).toBe(400);
+    expect((await post(body(sha, { id: '2026-01-01-not-listed' }))).status).toBe(404);
+    expect((await post(body(sha), { 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' })).status).toBe(403);
+    expect((await post(body(sha), { Origin: HUB, 'Content-Type': 'application/json' })).status).toBe(403);
+    expect(fake!.ran()).toBe(false);
+    const p = { slug: 'career', repos: [career], folders: [] } as never;
+    const busy = await approveDraft({ kind: 'approve-draft', slug: 'career', id: ID, question: 2, sha256: sha }, { project: () => p, uvPath: fake!.uv, home: root, running: new Set(['career']) });
+    expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it('none of it reaches the MCP tools', async () => {
+    const { call } = await ready('approve');
+    for (const agent of ['/agent/v1/projects', '/agent/v1/projects/career']) {
+      expect(JSON.stringify((await call('GET', agent, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/draft|Kept as-is|approve/i);
     }
   });
 });

@@ -4,13 +4,14 @@
 // status …`) through the hub; if it fails, its output and the command to copy
 // are shown. Clicking a card shows its fill sheet (fill_sheet.json, or
 // fill_sheet.md) with a Copy button on every field except notes and missing
-// values, and character counts against any limit. Everything is read from
-// local disk by the hub.
+// values, and character counts against any limit. A pending shorter draft that
+// fits gets an Approve button, which runs Career HQ's approve-draft with the
+// SHA-256 of the draft as shown. Everything is read from local disk by the hub.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
-import { useState, type MouseEvent } from 'react';
-import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FieldCount, type FillPart, type ShownQueue } from '../api.ts';
+import { createContext, useContext, useState, type MouseEvent } from 'react';
+import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sha256Hex, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
+import { approveShorterDraft, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import type { SectionProps } from './sections.tsx';
 
@@ -330,9 +331,15 @@ function Part({ part }: { part: FillPart }) {
 }
 
 /** A pending shorter draft: a suggestion with its own count. No Copy button; Career HQ makes it the value once approved. */
-function DraftBox({ draft }: { draft: NonNullable<Extract<FillPart, { type: 'field' }>['draft']> }) {
+/** Approving drafts in the open fill sheet: one at a time, every button disabled while one runs. */
+const ApproveContext = createContext<{ approve: (d: ShorterDraft) => void; running: number | null } | null>(null);
+
+function DraftBox({ draft }: { draft: ShorterDraft }) {
   const { count } = draft;
   const fits = count.max !== null && !count.over;
+  const approval = useContext(ApproveContext);
+  // Only drafts Career HQ numbered (JSON) and that fit a known limit can be approved here.
+  const approvable = fits && draft.question !== null && approval !== null;
   return (
     <div className="mt-2 rounded-md border border-dashed border-violet-400 bg-violet-50/70 px-2.5 py-2 dark:border-violet-700 dark:bg-violet-950/40" data-testid="shorter-draft">
       <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-violet-800 dark:text-violet-300">
@@ -345,7 +352,24 @@ function DraftBox({ draft }: { draft: NonNullable<Extract<FillPart, { type: 'fie
         </span>
       </p>
       <p className="mt-1 text-sm break-words whitespace-pre-wrap text-stone-800 select-text dark:text-stone-200">{draft.value}</p>
-      <p className="mt-1 text-xs text-violet-700/80 dark:text-violet-300/80">Not approved yet. Approve it in Career HQ to make it the value.</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <p className="flex-1 text-xs text-violet-700/80 dark:text-violet-300/80">
+          {approvable ? 'Not approved yet. Approve makes it the value (Career HQ keeps the old answer).' : count.over ? 'Not approved yet, and still too long to approve.' : 'Not approved yet. Approve it in Career HQ to make it the value.'}
+        </p>
+        {approvable && (
+          <button
+            type="button"
+            data-testid="approve-draft"
+            disabled={approval.running !== null}
+            onClick={() => approval.approve(draft)}
+            title="Runs Career HQ's approve-draft command"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-violet-700 px-2.5 text-xs font-medium text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-violet-600 dark:hover:bg-violet-500"
+          >
+            {approval.running === draft.question ? <Loader2 size={12} className="animate-spin" aria-hidden /> : <Check size={12} aria-hidden />}
+            {approval.running === draft.question ? 'Approving…' : 'Approve'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -391,7 +415,28 @@ function LimitBanner({ parts }: { parts: FillPart[] }) {
 
 function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application; onClose: () => void }) {
   const sheet = useQuery({ queryKey: ['fill-sheet', slug, app.id], queryFn: () => fetchFillSheet(slug, app.id), gcTime: 0 });
+  const queryClient = useQueryClient();
+  const [result, setResult] = useState<{ ok: boolean; text: string; output?: string; command?: string } | null>(null);
+  const approve = useMutation({
+    // The hash is of the draft string exactly as this page received and shows it; never re-read at click time.
+    mutationFn: async (d: ShorterDraft) => approveShorterDraft(slug, app.id, d.question!, await sha256Hex(d.value)),
+    onMutate: () => setResult(null),
+    onSuccess: (r) => setResult({ ok: true, text: r.message }),
+    onError: (e: Error) => {
+      const body = e instanceof HubError ? e.body : {};
+      const output = typeof body.output === 'string' && body.output && !e.message.startsWith('error:') ? body.output : undefined;
+      setResult({ ok: false, text: `Not approved: ${e.message}`, output, command: typeof body.command === 'string' ? body.command : undefined });
+    },
+    // Reload whatever happened (never retried): the sheet, the card's warning line, the home card.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['fill-sheet', slug, app.id] });
+      void queryClient.invalidateQueries({ queryKey: ['applications', slug] });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+  const running = approve.isPending ? (approve.variables?.question ?? null) : null;
   return (
+    <ApproveContext.Provider value={{ approve: (d) => approve.mutate(d), running }}>
     <Modal title={`Fill sheet · ${app.company} · ${app.title}`} onClose={onClose} wide>
       <div className="-mt-2 max-h-[75vh] space-y-1 overflow-y-auto pr-1" data-testid="fill-sheet">
         {sheet.isPending && <p className="text-sm text-stone-500">Loading…</p>}
@@ -407,6 +452,11 @@ function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application
             ⚠ {w}
           </p>
         ))}
+        {result && (
+          <div className="sticky top-0 z-10 pb-1" data-testid="approve-result">
+            <Notice notice={result} />
+          </div>
+        )}
         {sheet.data && <LimitBanner parts={sheet.data.parts} />}
         {sheet.data?.parts.map((p, i) => <Part key={i} part={p} />)}
       </div>
@@ -414,5 +464,6 @@ function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application
         <Action onClick={onClose}>Close</Action>
       </div>
     </Modal>
+    </ApproveContext.Provider>
   );
 }
