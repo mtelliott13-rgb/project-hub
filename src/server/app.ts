@@ -29,7 +29,22 @@ import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
 import { browse, checkPaths, FolderError, suggestions } from './folders.ts';
-import { approveDraft, approveDraftSchema, changeQueueStatus, queueStatusSchema } from './queue-status.ts';
+import type { z } from 'zod';
+import { findFeedFiles, readFeed } from './job-feed.ts';
+import {
+  approveDraft,
+  approveDraftSchema,
+  CAREER_KINDS,
+  changeQueueStatus,
+  launchApply,
+  launchApplySchema,
+  launchBuild,
+  launchBuildSchema,
+  openLetter,
+  openLetterSchema,
+  queueStatusSchema,
+  type QueueStatusResult,
+} from './queue-status.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
 import type { ProjectStore } from './project-store.ts';
 import { projectInputSchema, ProjectsFileError } from './projects-file.ts';
@@ -104,7 +119,7 @@ export function createApp(deps: AppDeps) {
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
-  // Projects with a Career HQ command (status or approve-draft) running now.
+  // Projects with a Career HQ command (status, approve-draft, open-letter, launch-apply, launch-build) running now.
   const queueRuns = new Set<string>();
   const app = new Hono();
 
@@ -146,6 +161,7 @@ export function createApp(deps: AppDeps) {
         repoStatus: p.repos.map((dir) => repos.get(dir)),
         toolkit: toolkitSummary(p),
         applications: applicationsSummary(p),
+        jobFeed: jobFeedSummary(p),
       })),
     );
   });
@@ -247,14 +263,32 @@ export function createApp(deps: AppDeps) {
 
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
-    // An application's status, or approving a shorter draft: runs Career HQ's own command and reports its result.
+    // Career HQ's own commands (a status, approving a draft, Open in Word, Fill
+    // application, Build packet): run in its repo, and report its result.
     const kind = (body as { kind?: unknown } | null)?.kind;
-    if (kind === 'queue-status' || kind === 'approve-draft') {
+    if ((CAREER_KINDS as readonly unknown[]).includes(kind)) {
       const careerDeps = { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns };
-      const parsed = kind === 'queue-status' ? queueStatusSchema.safeParse(body) : approveDraftSchema.safeParse(body);
-      if (!parsed.success) return c.json({ error: `bad ${kind} request: ${parsed.error.issues[0].path.join('.')} ${parsed.error.issues[0].message}` }, 400);
-      const result = parsed.data.kind === 'queue-status' ? await changeQueueStatus(parsed.data, careerDeps) : await approveDraft(parsed.data, careerDeps);
-      if (result.status === 200 && !parsed.data.dryRun) feed.notify();
+      const run = async () => {
+        const fail = (e: z.ZodError) => ({ status: 400 as const, body: { error: `bad ${kind} request: ${e.issues[0].path.join('.')} ${e.issues[0].message}` } });
+        const one = <T,>(schema: z.ZodType<T>, go: (req: T, d: typeof careerDeps) => Promise<QueueStatusResult>) => {
+          const parsed = schema.safeParse(body);
+          return parsed.success ? go(parsed.data, careerDeps) : fail(parsed.error);
+        };
+        switch (kind) {
+          case 'queue-status':
+            return one(queueStatusSchema, changeQueueStatus);
+          case 'approve-draft':
+            return one(approveDraftSchema, approveDraft);
+          case 'open-letter':
+            return one(openLetterSchema, openLetter);
+          case 'launch-apply':
+            return one(launchApplySchema, launchApply);
+          default:
+            return one(launchBuildSchema, launchBuild);
+        }
+      };
+      const result = await run();
+      if (result.status === 200 && !(body as { dryRun?: unknown }).dryRun) feed.notify();
       c.header('Cache-Control', 'no-store');
       return c.json(result.body, result.status);
     }
@@ -410,6 +444,18 @@ function applicationsSummary(p: { repos: string[]; folders: string[] }) {
     return { summary: queueSummary(q.counts), total: q.items.length, error: null };
   } catch (e) {
     return { summary: null, total: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** For the card and to show the Job feed section: how many postings, and when it was generated. */
+function jobFeedSummary(p: { repos: string[]; folders: string[] }) {
+  const [file] = findFeedFiles(p);
+  if (!file) return null;
+  try {
+    const f = readFeed(file);
+    return { postings: f.postings.length, generated: f.generated, error: null };
+  } catch (e) {
+    return { postings: 0, generated: null, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

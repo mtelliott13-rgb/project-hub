@@ -16,6 +16,10 @@ export { APP_STATUSES, FITS, limitFlags, queueSummary, sortApplications, type Ap
 /** Where Career HQ writes the queue, relative to its repo: the current place first, then the older one. */
 export const QUEUE_FILES = ['jobs/queue.yaml', 'jobs/queue/review_queue.yaml'] as const;
 export const PACKET_FILES = { resume: 'resume.pdf', 'cover-letter': 'cover_letter.pdf' } as const;
+/** The cover letter you edit in Word (Career HQ's open-letter command opens it). */
+export const LETTER_DOCX = 'cover_letter.docx';
+/** The queue's `letter` values (SPEC.md "Editing the cover letter in Word"); `edited` means Word edits aren't synced yet. */
+export const LETTER_STATES = ['generated', 'edited', 'synced'] as const;
 export type PacketFile = keyof typeof PACKET_FILES;
 const FILL_SHEET_MD = 'fill_sheet.md';
 const FILL_SHEET_JSON = 'fill_sheet.json';
@@ -49,8 +53,10 @@ export type Application = {
   submittedOn: string | null;
   packet: string | null;
   notes: string | null;
+  /** State of cover_letter.docx as the queue reports it (generated | edited | synced), as written; null when not set. */
+  letter: string | null;
   /** Which packet files exist (only inside the repo; see packetDir). */
-  files: { resume: boolean; coverLetter: boolean; fillSheet: boolean };
+  files: { resume: boolean; coverLetter: boolean; coverLetterDocx: boolean; fillSheet: boolean };
   /** Missing required fields and the like, shown on the card. */
   problems: string[];
   /** Fields over their limit and pending shorter drafts in its fill sheet (added by withLimits; null if unread). */
@@ -169,6 +175,8 @@ export function parseQueue(text: string, file: string): Queue {
     const fitKnown = !fit || (FITS as readonly string[]).includes(fit);
     if (!fitKnown) issues.push(`unknown fit "${fit}"`);
     if (str(it.url) && !httpUrl(str(it.url))) issues.push('url is not an http(s) link');
+    const letter = str(it.letter);
+    if (letter && !(LETTER_STATES as readonly string[]).includes(letter)) issues.push(`unknown letter state "${letter}"`);
     const packet = str(it.packet);
     if (packet && !packetDir(root, packet)) issues.push(`packet folder not found inside ${path.basename(root)}: ${packet}`);
     items.push({
@@ -187,9 +195,11 @@ export function parseQueue(text: string, file: string): Queue {
       submittedOn: str(it.submitted_on),
       packet,
       notes: str(it.notes),
+      letter,
       files: {
         resume: !!packetFile(root, packet, PACKET_FILES.resume),
         coverLetter: !!packetFile(root, packet, PACKET_FILES['cover-letter']),
+        coverLetterDocx: !!packetFile(root, packet, LETTER_DOCX),
         fillSheet: !!(packetFile(root, packet, FILL_SHEET_JSON) || packetFile(root, packet, FILL_SHEET_MD)),
       },
       problems: issues,

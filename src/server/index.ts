@@ -33,6 +33,7 @@ import { macProbe } from './collector.ts';
 import { ghRunner, repoPoller, repoStatus } from './repos.ts';
 import { TOOLKIT_FILE } from './toolkit.ts';
 import { queueCandidates } from './applications.ts';
+import { feedCandidates } from './job-feed.ts';
 import { fileWatcher } from './files.ts';
 import { fileInbox } from './links.ts';
 import { refileChats } from './chats.ts';
@@ -100,7 +101,7 @@ const store = createProjectStore(db, PROJECTS_FILE, path.join(BACKUP_DIR, 'proje
   for (const p of listAllProjects(db)) for (const dir of p.repos) if (!p.archived && !repos.get(dir)) void repos.refresh(dir);
   feed.notify();
 });
-// toolkit.yaml and jobs/queue/review_queue.yaml in any project folder: edits
+// toolkit.yaml, the review queue and jobs/feed/feed.json in any project folder: edits
 // outside the hub (or a new or deleted file) reach the card and page without a restart.
 const toolkitWatchers = new Map<string, { close: () => void }>();
 function watchToolkits() {
@@ -109,7 +110,7 @@ function watchToolkits() {
       .filter((p) => !p.archived)
       .flatMap((p) => [...p.repos, ...p.folders])
       .filter((dir) => fs.existsSync(dir))
-      .flatMap((dir) => [path.join(dir, TOOLKIT_FILE), ...queueCandidates([dir])]),
+      .flatMap((dir) => [path.join(dir, TOOLKIT_FILE), ...queueCandidates([dir]), ...feedCandidates([dir])]),
   );
   for (const [file, w] of toolkitWatchers) if (!wanted.has(file)) (w.close(), toolkitWatchers.delete(file));
   for (const file of wanted) if (!toolkitWatchers.has(file)) toolkitWatchers.set(file, watchFile(file, () => feed.notify()));

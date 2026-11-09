@@ -6,6 +6,7 @@ import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { ActivityEvent, ProjectActivity } from '../../src/server/activity.ts';
 import type { Application, FieldCount, FillPart, FillSheet, Queue, ShorterDraft } from '../../src/server/applications.ts';
 import type { AppStatus } from '../../src/server/queue-rules.ts';
+import type { Feed, Posting } from '../../src/server/job-feed.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
 
@@ -22,6 +23,8 @@ export type ProjectDto = Jsonified<Project> & {
   toolkit: { file: string; done: number; total: number; error: string | null } | null;
   /** Null without a review queue (jobs/queue.yaml or jobs/queue/review_queue.yaml). */
   applications: { summary: string | null; total: number; error: string | null } | null;
+  /** Null without a job feed (jobs/feed/feed.json). */
+  jobFeed: { postings: number; generated: string | null; error: string | null } | null;
 };
 export type { RepoStatus };
 export type { FolderEntry, ProjectInput };
@@ -195,3 +198,20 @@ export const setApplicationStatus = (slug: string, id: string, status: AppStatus
  */
 export const approveShorterDraft = (slug: string, id: string, question: number, sha256: string) =>
   hub<{ command: string; message: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'approve-draft', slug, id, question, sha256 } });
+
+/**
+ * Career HQ's launch commands (open-letter, launch-apply, launch-build): each
+ * returns within seconds with Career HQ's one line; launch-apply and
+ * launch-build leave a Terminal window running Claude Code. On failure the
+ * HubError's body has `command` (to copy) and `output`.
+ */
+export type CareerLaunchKind = 'open-letter' | 'launch-apply' | 'launch-build';
+export const runCareerLaunch = (kind: CareerLaunchKind, slug: string, id: string) =>
+  hub<{ command: string; message: string }>('/api/launch', { method: 'POST', body: { kind, slug, id } });
+
+// Career HQ's job feed (read only).
+export type { Feed, Posting };
+export type ShownFeed = Feed & { others: string[] };
+export type FeedResponse = ShownFeed | { file: string; error: string };
+export const feedOk = (r: FeedResponse | undefined): r is ShownFeed => !!r && 'postings' in r;
+export const fetchJobFeed = (slug: string) => hub<FeedResponse>(`/api/projects/${slug}/job-feed`);

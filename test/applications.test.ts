@@ -7,7 +7,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
 import { limitSummary, sha256Hex } from '../src/server/queue-rules.ts';
-import { approveDraft, changeQueueStatus, copyCommand } from '../src/server/queue-status.ts';
+import { approveDraft, changeQueueStatus, copyCommand, launchBuild } from '../src/server/queue-status.ts';
+import { parseFeed } from '../src/server/job-feed.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
 import { MIGRATIONS_DIR } from '../src/server/config.ts';
@@ -118,11 +119,11 @@ describe('reading the queue', () => {
     expect(queueSummary({ draft: 2, reviewed: 1, submitted: 3 })).toBe('2 drafts · 1 reviewed · 3 submitted');
     const [acme, globex, initech] = q.items;
     expect(acme).toMatchObject({ company: 'Acme Energy', fit: 'possible', fitKnown: true, url: 'https://example.com/jobs/123', deadline: '2026-12-01', notes: null, problems: [] });
-    expect(acme.files).toEqual({ resume: true, coverLetter: true, fillSheet: true });
+    expect(acme.files).toEqual({ resume: true, coverLetter: true, coverLetterDocx: false, fillSheet: true });
     // Globex's resume.pdf is a link out of the repo: not offered.
-    expect(globex.files).toEqual({ resume: false, coverLetter: false, fillSheet: false });
+    expect(globex.files).toEqual({ resume: false, coverLetter: false, coverLetterDocx: false, fillSheet: false });
     expect(globex.submittedOn).toBe('2026-10-30');
-    expect(initech).toMatchObject({ fit: 'great', fitKnown: false, url: null, files: { resume: false, coverLetter: false, fillSheet: false } });
+    expect(initech).toMatchObject({ fit: 'great', fitKnown: false, url: null, files: { resume: false, coverLetter: false, coverLetterDocx: false, fillSheet: false } });
     expect(initech.problems).toEqual(['unknown fit "great"', 'url is not an http(s) link', 'packet folder not found inside career: ../outside']);
   });
 
@@ -176,7 +177,8 @@ describe('fill sheet', () => {
  * by the `mode` file next to it (ok: puts after.yaml in place as the queue;
  * fail: exits 1 with a message; noop: changes nothing; slow: sleeps;
  * approve: puts after.json in place at the path in `target` and prints Career
- * HQ's one line; refuse: prints an "error:" line and exits 2).
+ * HQ's one line; refuse: prints an "error:" line and exits 2; launch: prints
+ * a launch command's one line; dup: a launch-build refusal, exit 1).
  */
 const FAKE_UV = `#!/bin/sh
 d=$(dirname "$0")
@@ -189,10 +191,12 @@ case $(cat "$d/mode") in
   slow) sleep 5;;
   approve) cp "$d/after.json" "$(cat "$d/target")"; echo "$5 question $6: draft approved (5 / 50 characters)";;
   refuse) echo "checking" ; echo "error: the draft for question $6 has changed since it was shown; reload and try again" >&2; exit 2;;
+  launch) echo "$5: opened Claude Code in Terminal running /x $5";;
+  dup) echo "error: $5 already has a packet: 2026-01-01-made-up" >&2; exit 1;;
 esac
 `;
 
-type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse';
+type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse' | 'launch' | 'dup';
 function fakeUv(root: string, mode: FakeMode, after?: string) {
   const bin = path.join(root, 'fake-bin');
   fs.mkdirSync(bin, { recursive: true });
@@ -704,5 +708,153 @@ describe('approving a shorter draft', () => {
     for (const agent of ['/agent/v1/projects', '/agent/v1/projects/career']) {
       expect(JSON.stringify((await call('GET', agent, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/draft|Kept as-is|approve/i);
     }
+  });
+});
+
+// Career HQ's launch commands: Open in Word, Fill application, Build packet.
+const FEED = {
+  format: 'career-hq job feed',
+  version: 1,
+  generated: '2026-11-08',
+  counts: { postings: 4, new: 1, reposted: 1 },
+  runs: [
+    { company: 'Example Co', ok: true, fetched: 3 },
+    { company: 'Nowhere Inc', ok: false, error: 'HTTP 404' },
+  ],
+  postings: [
+    { id: 'ashby:example-co:0a1b-2c3d', company: 'Example Co', title: 'Data Intern', location: 'Denver, CO', level: 'intern', location_reason: 'colorado', url: 'https://example.com/jobs/999', apply_url: 'https://example.com/jobs/999/apply', source: 'ashby', posted_on: '', first_seen: '2026-11-08', age_days: 0, open_30_plus: false, reposted: 1, new: true, fit: null },
+    // Same job as Acme's packet (its apply_url matches the queue item's url, give or take a trailing slash).
+    { id: 'greenhouse:acme:123', company: 'Acme Energy', title: 'Data Analyst Intern', location: 'Denver, CO', level: 'intern', location_reason: 'colorado', url: 'https://boards.example.com/acme/123', apply_url: 'https://example.com/jobs/123/', source: 'greenhouse', age_days: 12, open_30_plus: false, reposted: 0, new: false, fit: null },
+    { id: 'lever:made-up:abc', company: 'Made Up', title: 'Summer Analyst', location: 'United States', level: 'intern', location_reason: 'us_internship_season_not_stated', url: 'https://example.com/m', apply_url: 'https://example.com/m', source: 'lever', age_days: 40, open_30_plus: true, reposted: 0, new: false, fit: 'possible' },
+    { id: 'workday:odd:1', company: 'Odd', title: 'Odd Id', url: 'https://example.com/o', apply_url: 'https://example.com/o' },
+    { company: 'No id' },
+  ],
+  not_covered: [{ company: 'Hand Check Co', uses: 'not determined', check_url: 'https://example.com/careers' }],
+  attribution: [],
+};
+
+describe("Career HQ's launch buttons", () => {
+  const ACME = '2026-11-03-acme-energy-data-analyst-intern';
+  const INITECH = '2026-11-01-initech-intern'; // the reviewed one
+  function launchSetup(mode: FakeMode = 'launch', feed: object | string = FEED) {
+    const s = setup({ mode });
+    fs.mkdirSync(path.join(s.career, 'jobs/feed'), { recursive: true });
+    fs.writeFileSync(path.join(s.career, 'jobs/feed/feed.json'), typeof feed === 'string' ? feed : JSON.stringify(feed));
+    fs.writeFileSync(path.join(s.acme, 'cover_letter.docx'), 'PK fake docx');
+    const launch = (kind: string, id: unknown, extra: object = {}) => s.call('POST', '/api/launch', { kind, slug: 'career', id, ...extra });
+    return { ...s, launch };
+  }
+
+  it('reads the feed: flags, packets matched by url, odd ids shown but not launchable, failed boards and hand checks', () => {
+    const f = parseFeed(JSON.stringify(FEED), '/r/jobs/feed/feed.json', [{ id: ACME, url: 'https://example.com/jobs/123' }]);
+    expect(f.postings.map((p) => [p.id, p.packet, p.idOk])).toEqual([
+      ['ashby:example-co:0a1b-2c3d', null, true],
+      ['greenhouse:acme:123', ACME, true],
+      ['lever:made-up:abc', null, true],
+      ['workday:odd:1', null, false],
+    ]);
+    expect(f.postings[0]).toMatchObject({ isNew: true, reposted: 1, postedOn: null, ageDays: 0, applyUrl: 'https://example.com/jobs/999/apply' });
+    expect(f.postings[2]).toMatchObject({ locationReason: 'us_internship_season_not_stated', open30Plus: true, fit: 'possible' });
+    expect(f.warnings).toEqual(["Posting 5 has no id, so it's skipped"]);
+    expect(f.failedRuns).toEqual([{ company: 'Nowhere Inc', error: 'HTTP 404' }]);
+    expect(f.notCovered).toEqual([{ company: 'Hand Check Co', uses: 'not determined', checkUrl: 'https://example.com/careers' }]);
+    expect(f.counts).toEqual({ postings: 4, new: 1, reposted: 1 });
+    expect(parseFeed(JSON.stringify({ ...FEED, version: 2 }), 'f').warnings[0]).toMatch(/version 2/);
+    expect(() => parseFeed('{', 'feed.json')).toThrow(/not valid JSON/);
+    expect(() => parseFeed('{"items": []}', 'feed.json')).toThrow(/postings/);
+  });
+
+  it('the feed and the queue letter state: page token only, no-store, on the card, never in MCP', async () => {
+    const { call } = launchSetup();
+    const res = await call('GET', '/api/projects/career/job-feed');
+    expect(res.cache).toBe('no-store');
+    expect(res.body.postings).toHaveLength(4);
+    expect(res.body.postings[1].packet).toBe(ACME);
+    expect((await call('GET', '/api/projects/career/job-feed', undefined, {})).status).toBe(403);
+    expect((await call('GET', '/api/projects/other/job-feed')).status).toBe(404);
+    const projects = (await call('GET', '/api/projects')).body;
+    expect(projects.find((p: { slug: string }) => p.slug === 'career').jobFeed).toEqual({ postings: 4, generated: '2026-11-08', error: null });
+    expect(projects.find((p: { slug: string }) => p.slug === 'other').jobFeed).toBeNull();
+    const q = (await call('GET', '/api/projects/career/applications')).body;
+    expect(q.items[0].files.coverLetterDocx).toBe(true);
+    for (const url of ['/agent/v1/projects', '/agent/v1/projects/career']) {
+      const text = JSON.stringify((await call('GET', url, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body);
+      expect(text).not.toMatch(/feed|posting|Example Co|Made Up|letter/i);
+    }
+    const broken = launchSetup('launch', '{ nope');
+    expect((await broken.call('GET', '/api/projects/career/job-feed')).body.error).toMatch(/not valid JSON/);
+  });
+
+  it('reads the letter state, flagging values it does not know', () => {
+    const base = 'items:\n  - id: "a"\n    company: "A"\n    title: "T"\n    status: "draft"\n    added: "2026-11-01"\n    packet: "x"\n';
+    expect(parseQueue(`${base}    letter: "edited"\n`, '/r/jobs/queue.yaml').items[0].letter).toBe('edited');
+    expect(parseQueue(base, '/r/jobs/queue.yaml').items[0].letter).toBeNull();
+    expect(parseQueue(`${base}    letter: "typed"\n`, '/r/jobs/queue.yaml').items[0].problems).toContain('unknown letter state "typed"');
+  });
+
+  it('dryRun shows each exact command; a run passes separate arguments with no shell and shows the one line', async () => {
+    const { launch, career, fake } = launchSetup();
+    const cases: [string, string][] = [
+      ['open-letter', ACME],
+      ['launch-apply', INITECH],
+      ['launch-build', 'ashby:example-co:0a1b-2c3d'],
+    ];
+    for (const [kind, id] of cases) {
+      const dry = await launch(kind, id, { dryRun: true });
+      expect(dry.status).toBe(200);
+      expect(dry.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/review_queue.py', kind, id] });
+      expect(dry.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py ${kind} ${id}`);
+    }
+    expect(fake!.ran()).toBe(false);
+    for (const [kind, id] of cases) {
+      const res = await launch(kind, id);
+      expect(res.status).toBe(200);
+      expect(res.cache).toBe('no-store');
+      expect(res.body.message).toBe(`${id}: opened Claude Code in Terminal running /x ${id}`);
+      expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', kind, id]);
+    }
+    // Minimal environment, as for the status command.
+    expect(fake!.env()).not.toMatch(/X_HUB|ANTHROPIC|CLAUDE/);
+  });
+
+  it("refuses before running: odd or unknown ids, a packet that isn't reviewed, no .docx, a posting with a packet, no token", async () => {
+    const { launch, fake, call, root, career } = launchSetup();
+    for (const id of ['../x', '2026-11-03-Acme', 'x;rm -rf ~', 7, null]) {
+      expect((await launch('open-letter', id)).status).toBe(400);
+      expect((await launch('launch-apply', id)).status).toBe(400);
+    }
+    for (const id of ['ashby:example-co:0a1b 2c3d', 'workday:odd:1', 'ashby:Example:1', 'ashby:x:1;rm', ' ashby:example-co:0a1b-2c3d', 'ashby:example-co:0a1b-2c3d\n', 5]) {
+      expect((await launch('launch-build', id)).status).toBe(400);
+    }
+    expect((await launch('open-letter', '2026-01-01-not-listed')).status).toBe(404);
+    expect((await launch('launch-apply', '2026-01-01-not-listed')).status).toBe(404);
+    expect((await launch('launch-build', 'ashby:example-co:not-in-feed')).status).toBe(404);
+    // Fill application only for reviewed packets (Acme is a draft, Globex submitted).
+    const draft = await launch('launch-apply', ACME);
+    expect(draft).toMatchObject({ status: 409, body: { error: expect.stringMatching(/"draft", not "reviewed"/) } });
+    expect((await launch('launch-apply', '2026-10-28-globex-ops-analyst')).status).toBe(409);
+    // Globex has no cover_letter.docx.
+    expect((await launch('open-letter', '2026-10-28-globex-ops-analyst')).body.error).toMatch(/no cover_letter.docx/);
+    // Acme already has a packet for this posting.
+    expect((await launch('launch-build', 'greenhouse:acme:123')).body).toEqual({ error: `greenhouse:acme:123 already has a packet: ${ACME}` });
+    const noToken = await call('POST', '/api/launch', { kind: 'launch-build', slug: 'career', id: 'ashby:example-co:0a1b-2c3d' }, { Origin: HUB, 'Content-Type': 'application/json' });
+    expect(noToken.status).toBe(403);
+    const noOrigin = await call('POST', '/api/launch', { kind: 'launch-apply', slug: 'career', id: INITECH }, { 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' });
+    expect(noOrigin.status).toBe(403);
+    expect((await call('POST', '/api/launch', { kind: 'launch-build', slug: 'other', id: 'ashby:example-co:0a1b-2c3d' })).status).toBe(404);
+    expect(fake!.ran()).toBe(false);
+    // One Career HQ command per project at a time.
+    const p = { slug: 'career', repos: [career], folders: [] } as never;
+    const busy = await launchBuild({ kind: 'launch-build', slug: 'career', id: 'ashby:example-co:0a1b-2c3d' }, { project: () => p, uvPath: fake!.uv, home: root, running: new Set(['career']) });
+    expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it("a failure shows Career HQ's error: line and the command to copy", async () => {
+    const { launch } = launchSetup('dup');
+    const res = await launch('launch-build', 'ashby:example-co:0a1b-2c3d');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('error: ashby:example-co:0a1b-2c3d already has a packet: 2026-01-01-made-up (exit 1)');
+    expect(res.body.command).toBe('cd ~/career && uv run python scripts/review_queue.py launch-build ashby:example-co:0a1b-2c3d');
   });
 });

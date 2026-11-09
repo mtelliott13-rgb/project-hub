@@ -6,13 +6,17 @@
 // fill_sheet.md) with a Copy button on every field except notes and missing
 // values, and character counts against any limit. A pending shorter draft that
 // fits gets an Approve button, which runs Career HQ's approve-draft with the
-// SHA-256 of the draft as shown. Everything is read from local disk by the hub.
+// SHA-256 of the draft as shown. Open in Word, and Fill application (reviewed
+// packets only), run Career HQ's open-letter and launch-apply; launch-apply
+// opens a Terminal window running Claude Code's /apply, which stops before
+// submit. Everything is read from local disk by the hub.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { createContext, useContext, useState, type MouseEvent } from 'react';
 import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sha256Hex, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { approveShorterDraft, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
+import { approveShorterDraft, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
+import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch } from './career-launch.ts';
 import type { SectionProps } from './sections.tsx';
 
 const statusLook: Record<AppStatus, string> = {
@@ -55,7 +59,20 @@ function Deadline({ app }: { app: Application }) {
   );
 }
 
-function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; slug: string; run: SectionProps['run']; busy: boolean; onStatus: (s: AppStatus) => void; onOpen: () => void }) {
+type CardProps = {
+  app: Application;
+  slug: string;
+  repo: string;
+  run: SectionProps['run'];
+  busy: boolean;
+  /** Which Career HQ launch is running for this card, if any. */
+  launching: CareerLaunchKind | null;
+  onStatus: (s: AppStatus) => void;
+  onLaunch: (kind: CareerLaunchKind) => void;
+  onOpen: () => void;
+};
+
+function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpen }: CardProps) {
   const open = (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a, select, input')) return;
     if (app.files.fillSheet) onOpen();
@@ -98,6 +115,7 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
       </div>
       {app.notes && <p className="mt-1 text-sm whitespace-pre-line text-stone-600 dark:text-stone-400">{app.notes}</p>}
       {app.problems.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {app.problems.join(' · ')}</p>}
+      {app.letter === 'edited' && <LetterNotSynced app={app} repo={repo} />}
       {app.limits && limitSummary(app.limits) && (
         <p className={`mt-1 text-xs font-medium ${app.limits.over ? 'text-red-600 dark:text-red-400' : 'text-violet-700 dark:text-violet-300'}`} data-testid="limit-flags">
           ⚠ Fill sheet: {limitSummary(app.limits)}
@@ -123,6 +141,17 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
             </option>
           ))}
         </select>
+        {app.status === 'reviewed' && (
+          <Action
+            small
+            primary
+            disabled={busy}
+            title={'Runs Career HQ\'s launch-apply: a new Terminal window running Claude Code\'s /apply, which fills the form in Chrome and stops before submit. You submit it yourself.'}
+            onClick={() => onLaunch('launch-apply')}
+          >
+            {launching === 'launch-apply' ? 'Opening Terminal…' : 'Fill application'}
+          </Action>
+        )}
         <span className="flex-1" />
         <Action small disabled={!app.files.resume} title={app.files.resume ? 'Open resume.pdf in Preview' : 'No resume.pdf in this packet'} onClick={() => run({ kind: 'packet-file', slug, id: app.id, file: 'resume' })}>
           Resume PDF
@@ -135,6 +164,11 @@ function Card({ app, slug, run, busy, onStatus, onOpen }: { app: Application; sl
         >
           Cover letter PDF
         </Action>
+        {app.files.coverLetterDocx && (
+          <Action small disabled={busy} title="Runs Career HQ's open-letter: opens cover_letter.docx in Microsoft Word (changes no file)" onClick={() => onLaunch('open-letter')}>
+            {launching === 'open-letter' ? 'Opening…' : 'Open in Word'}
+          </Action>
+        )}
         {app.files.fillSheet && (
           <Action small onClick={onOpen}>
             <span className="inline-flex items-center gap-1">
@@ -151,9 +185,10 @@ export function ApplicationsSection({ project, run }: SectionProps) {
   const slug = project.slug;
   const queryClient = useQueryClient();
   const queue = useQuery({ queryKey: ['applications', slug], queryFn: () => fetchQueue(slug) });
-  const [notice, setNotice] = useState<{ ok: boolean; text: string; output?: string; command?: string } | null>(null);
+  const [notice, setNotice] = useState<NoticeValue | null>(null);
   const [showing, setShowing] = useState<Application | null>(null);
   const change = useMutation({
+    mutationKey: careerKey(slug),
     mutationFn: ({ app, status, version }: { app: Application; status: AppStatus; version: string }) => setApplicationStatus(slug, app.id, status, version),
     onMutate: () => setNotice(null),
     onSuccess: (r, { app, status }) => {
@@ -175,6 +210,9 @@ export function ApplicationsSection({ project, run }: SectionProps) {
     },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['projects'] }),
   });
+
+  const launch = useCareerLaunch(slug, setNotice);
+  const busy = useCareerBusy(slug);
 
   const q = queue.data;
   if (queue.isPending) return <p className="text-sm text-stone-500">Loading…</p>;
@@ -200,6 +238,11 @@ export function ApplicationsSection({ project, run }: SectionProps) {
           <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's status command…
         </p>
       )}
+      {launch.isPending && (
+        <p className="inline-flex items-center gap-1.5 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300" role="status">
+          <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's {launch.variables?.kind} command…
+        </p>
+      )}
       {notice && <Notice notice={notice} />}
       {q.problems.map((p) => (
         <p key={p} className="text-xs text-amber-700">
@@ -218,9 +261,12 @@ export function ApplicationsSection({ project, run }: SectionProps) {
                 key={`${app.index}:${app.id}`}
                 app={app}
                 slug={slug}
+                repo={careerRepo(q.file)}
                 run={run}
-                busy={change.isPending}
+                busy={busy}
+                launching={launch.isPending && launch.variables?.id === app.id ? launch.variables.kind : null}
                 onStatus={(status) => change.mutate({ app, status, version: q.version })}
+                onLaunch={(kind) => launch.mutate({ kind, id: app.id, label: `${app.company} · ${app.title}` })}
                 onOpen={() => setShowing(app)}
               />
             ))}
@@ -232,7 +278,26 @@ export function ApplicationsSection({ project, run }: SectionProps) {
   );
 }
 
-function Notice({ notice }: { notice: { ok: boolean; text: string; output?: string; command?: string } }) {
+/** Word edits to the cover letter that Career HQ hasn't synced yet: /apply leaves the letter PDF out until they are. */
+function LetterNotSynced({ app, repo }: { app: Application; repo: string }) {
+  const command = `cd ${repo} && uv run python scripts/letter_sync.py sync ${quoteArg(app.id)}`;
+  return (
+    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="letter-edited">
+      <p>
+        ⚠ Cover letter has Word edits that aren't synced yet, so the PDF may be out of date
+        {app.status === 'reviewed' ? ' and Fill application will leave the letter out' : ''}. To sync:
+      </p>
+      <div className="flex items-start gap-2">
+        <code className="min-w-0 flex-1 rounded bg-amber-50 px-2 py-1 break-all text-stone-800 dark:bg-amber-950 dark:text-stone-200">{command}</code>
+        <CopyButton value={command} label="the sync command" />
+      </div>
+    </div>
+  );
+}
+
+export type NoticeValue = { ok: boolean; text: string; output?: string; command?: string };
+
+export function Notice({ notice }: { notice: { ok: boolean; text: string; output?: string; command?: string } }) {
   if (notice.ok) return <p className="rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300">{notice.text}</p>;
   return (
     <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200" role="alert" data-testid="status-failed">
@@ -251,7 +316,7 @@ function Notice({ notice }: { notice: { ok: boolean; text: string; output?: stri
   );
 }
 
-function CopyButton({ value, label, anyway = false }: { value: string; label: string; anyway?: boolean }) {
+export function CopyButton({ value, label, anyway = false }: { value: string; label: string; anyway?: boolean }) {
   const [copied, setCopied] = useState<boolean | 'failed'>(false);
   const copy = () =>
     navigator.clipboard.writeText(value).then(
@@ -418,6 +483,7 @@ function FillSheetModal({ slug, app, onClose }: { slug: string; app: Application
   const queryClient = useQueryClient();
   const [result, setResult] = useState<{ ok: boolean; text: string; output?: string; command?: string } | null>(null);
   const approve = useMutation({
+    mutationKey: careerKey(slug),
     // The hash is of the draft string exactly as this page received and shows it; never re-read at click time.
     mutationFn: async (d: ShorterDraft) => approveShorterDraft(slug, app.id, d.question!, await sha256Hex(d.value)),
     onMutate: () => setResult(null),

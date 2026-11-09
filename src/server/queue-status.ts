@@ -1,6 +1,11 @@
 // Running Career HQ's own commands in the repo that holds the queue:
 //   uv run python scripts/review_queue.py status <id> <status>
 //   uv run python scripts/review_queue.py approve-draft <id> <question-number> <draft-sha256>
+//   uv run python scripts/review_queue.py open-letter <id>       (opens cover_letter.docx in Word)
+//   uv run python scripts/review_queue.py launch-apply <id>      (Terminal: claude --chrome "/apply <id>")
+//   uv run python scripts/review_queue.py launch-build <posting> (Terminal: claude --chrome "/build-packet <posting>")
+// The launch commands return in seconds: Career HQ itself opens a new Terminal
+// window for the long, browser-driving session, which you can watch and stop.
 // Career HQ owns the queue, meta.yaml, answers.yaml and the fill sheets, so the
 // hub never edits them. Both go through POST /api/launch, so they get every
 // Phase 2 check (hub page, Origin, page token, Host, JSON, dryRun). A request
@@ -12,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { fillSheetFor, findQueueFiles, QueueError, queueRoot, readQueue, withLimits, type Application, type Queue } from './applications.ts';
+import { FeedError, feedRoot, findFeedFiles, POSTING_ID, readFeed } from './job-feed.ts';
 import type { Project } from './db/schema.ts';
 import { shellQuote } from './launcher.ts';
 import { APP_STATUSES } from './queue-rules.ts';
@@ -20,6 +26,8 @@ export const QUEUE_SCRIPT = 'scripts/review_queue.py';
 /** Career HQ's ids: YYYY-MM-DD then lowercase words joined by single dashes. Nothing else reaches the command. */
 export const APP_ID = /^\d{4}-\d{2}-\d{2}(-[a-z0-9]+)+$/;
 const TIMEOUT_MS = 60_000;
+/** Career HQ's doc for the launch buttons allows 90 s (they return within a few). */
+const LAUNCH_TIMEOUT_MS = 90_000;
 const MAX_OUTPUT = 64 * 1024;
 const OUTPUT_LINES = 20;
 
@@ -44,6 +52,25 @@ export const approveDraftSchema = z.object({
   dryRun: z.boolean().optional(),
 });
 export type ApproveDraftRequest = z.infer<typeof approveDraftSchema>;
+
+const packetId = z.string().max(200).regex(APP_ID, 'must look like YYYY-MM-DD-company-title');
+/** "Open in Word": the packet's cover_letter.docx. */
+export const openLetterSchema = z.object({ kind: z.literal('open-letter'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
+/** "Fill application": only for a packet the queue shows as reviewed. */
+export const launchApplySchema = z.object({ kind: z.literal('launch-apply'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
+/** "Build packet": a posting in the current feed.json that has no packet yet. */
+export const launchBuildSchema = z.object({
+  kind: z.literal('launch-build'),
+  slug: z.string().min(1),
+  id: z.string().max(200).regex(POSTING_ID, "must be the feed's exact <system>:<board>:<job id>"),
+  dryRun: z.boolean().optional(),
+});
+export type OpenLetterRequest = z.infer<typeof openLetterSchema>;
+export type LaunchApplyRequest = z.infer<typeof launchApplySchema>;
+export type LaunchBuildRequest = z.infer<typeof launchBuildSchema>;
+
+/** Every Career HQ command the page can run, by launch kind. */
+export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'launch-apply', 'launch-build'] as const;
 
 export type QueueStatusDeps = {
   project: (slug: string) => Project | undefined;
@@ -114,6 +141,7 @@ function runCommand(argv: string[], cwd: string, timeoutMs: number, what: string
 }
 
 type Found = { p: Project; queue: Queue; item: Application; root: string };
+type Where = { p: Project; root: string };
 
 /** The project, its queue, the item the id names and the repo; or why not. */
 function find(slug: string, id: string, deps: QueueStatusDeps): Found | QueueStatusResult {
@@ -143,12 +171,13 @@ function find(slug: string, id: string, deps: QueueStatusDeps): Found | QueueSta
  * what it said, once it exits 0.
  */
 async function runInRepo(
-  f: Found,
+  f: Where,
   args: string[],
   what: string,
   dryRun: boolean | undefined,
   deps: QueueStatusDeps,
   check: (run: { output: string; stdout: string }, command: string) => QueueStatusResult,
+  timeoutMs = TIMEOUT_MS,
 ): Promise<QueueStatusResult> {
   const { p, root } = f;
   const command = copyCommand(root, args, deps.home);
@@ -163,12 +192,12 @@ async function runInRepo(
   } catch {
     return { status: 409, body: { error: `uv isn't at ${tilde(deps.uvPath, deps.home)}, so the hub can't run Career HQ's command`, command } };
   }
-  if (deps.running.has(p.slug)) return { status: 409, body: { error: 'A status change or approval is already running for this project; try again in a moment', command } };
+  if (deps.running.has(p.slug)) return { status: 409, body: { error: 'Another Career HQ command is already running for this project; try again in a moment', command } };
 
   deps.running.add(p.slug);
   try {
     console.log(`${new Date().toISOString()} Applications: ${p.slug}: cd ${root} && ${argv.map(shellQuote).join(' ')}`);
-    const run = await runCommand(argv, root, deps.timeoutMs ?? TIMEOUT_MS, what);
+    const run = await runCommand(argv, root, deps.timeoutMs ?? timeoutMs, what);
     if (!run.ok) return { status: 500, body: { error: run.error, output: run.output, command } };
     return check(run, command);
   } finally {
@@ -224,4 +253,81 @@ export async function approveDraft(req: ApproveDraftRequest, deps: QueueStatusDe
     if (stillThere) return { status: 500, body: { error: 'The command finished, but the fill sheet still shows that draft (or couldn\'t be read)', output: run.output, command } };
     return { status: 200, body: { ok: true, command, message, output: run.output, queue: now } };
   });
+}
+
+/** Career HQ's one-line answer (the last line it printed), or a fallback. */
+const lastLine = (stdout: string, fallback: string) => stdout.trim().split('\n').filter(Boolean).at(-1) ?? fallback;
+
+/** "Open in Word": Career HQ opens <packet>/cover_letter.docx in Microsoft Word and changes no file. */
+export async function openLetter(req: OpenLetterRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const f = find(req.slug, req.id, deps);
+  if ('status' in f && 'body' in f) return f;
+  if (!f.item.files.coverLetterDocx) return { status: 409, body: { error: `${req.id} has no cover_letter.docx yet` } };
+  return runInRepo(f, ['open-letter', req.id], 'open-letter', req.dryRun, deps, (run, command) => ({
+    status: 200,
+    body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Word.'), output: run.output },
+  }));
+}
+
+/**
+ * "Fill application": Career HQ opens a new Terminal window running
+ * `claude --chrome "/apply <id>"`, an interactive session that fills the form
+ * and stops before submit. Only for a packet the queue shows as reviewed
+ * (Career HQ checks meta.yaml again itself).
+ */
+export async function launchApply(req: LaunchApplyRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const f = find(req.slug, req.id, deps);
+  if ('status' in f && 'body' in f) return f;
+  if (f.item.status !== 'reviewed') {
+    return { status: 409, body: { error: `${req.id} is "${f.item.status}", not "reviewed"; only reviewed packets can be filled` } };
+  }
+  return runInRepo(
+    f,
+    ['launch-apply', req.id],
+    'launch-apply',
+    req.dryRun,
+    deps,
+    (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
+    LAUNCH_TIMEOUT_MS,
+  );
+}
+
+/**
+ * "Build packet": Career HQ opens a new Terminal window running
+ * `claude --chrome "/build-packet <posting-id>"`. The id must be exactly one
+ * in the current feed.json, with no packet yet (Career HQ refuses duplicates
+ * too). The string passed on is the feed's own, unchanged.
+ */
+export async function launchBuild(req: LaunchBuildRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const p = deps.project(req.slug);
+  if (!p) return { status: 404, body: { error: `Unknown project ${req.slug}` } };
+  const [file] = findFeedFiles(p);
+  if (!file) return { status: 404, body: { error: 'This project has no job feed' } };
+  const [queueFile] = findQueueFiles(p);
+  let posting;
+  try {
+    const queueItems = queueFile ? readQueue(queueFile).items : [];
+    posting = readFeed(file, queueItems).postings.find((x) => x.id === req.id);
+  } catch (e) {
+    if (e instanceof FeedError || e instanceof QueueError) return { status: 409, body: { error: e.message } };
+    throw e;
+  }
+  if (!posting) return { status: 404, body: { error: `"${req.id}" isn't in the current job feed` } };
+  if (!posting.idOk) return { status: 400, body: { error: `"${req.id}" isn't a <system>:<board>:<job id> posting id` } };
+  if (posting.packet) return { status: 409, body: { error: `${req.id} already has a packet: ${posting.packet}` } };
+  let root: string;
+  try {
+    root = fs.realpathSync(feedRoot(file));
+  } catch {
+    return { status: 409, body: { error: 'The folder holding the job feed is gone' } };
+  }
+  return runInRepo(
+    { p, root },
+    ['launch-build', posting.id],
+    'launch-build',
+    req.dryRun,
+    deps,
+    (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
+    LAUNCH_TIMEOUT_MS,
+  );
 }

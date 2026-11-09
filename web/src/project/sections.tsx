@@ -9,6 +9,7 @@ import { ApplicationsSection } from './ApplicationsSection.tsx';
 import { ChatsSection } from './ChatsSection.tsx';
 import { CollectorSection } from './CollectorSection.tsx';
 import { FilesSection } from './FilesSection.tsx';
+import { JobFeedSection } from './JobFeedSection.tsx';
 import { LinksSection } from './LinksSection.tsx';
 import { MonetizeSection } from './MonetizeSection.tsx';
 import { RepoSection } from './RepoSection.tsx';
@@ -38,6 +39,7 @@ export const SECTIONS: Section[] = [
   },
   { id: 'collector', title: () => 'Collector', column: 'main', Component: CollectorSection, show: (p) => p.collector !== null },
   { id: 'applications', title: () => 'Applications', column: 'main', Component: ApplicationsSection, show: (p) => p.applications !== null },
+  { id: 'job-feed', title: (p) => `Job feed${p.jobFeed && !p.jobFeed.error ? ` (${p.jobFeed.postings})` : ''}`, column: 'main', Component: JobFeedSection, show: (p) => p.jobFeed !== null },
   { id: 'toolkit', title: () => 'Toolkit', column: 'main', Component: ToolkitSection, show: (p) => p.toolkit !== null },
   { id: 'monetize', title: () => 'Monetize', column: 'main', Component: MonetizeSection },
   { id: 'repo', title: () => 'Commits and PRs', column: 'main', Component: RepoSection },
