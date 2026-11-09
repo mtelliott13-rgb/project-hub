@@ -1,15 +1,48 @@
 // The project's checklist from its toolkit.yaml (the file stays the source of
-// truth). In-progress items first, then each category. Changing a status
+// truth). In progress first as its own group, then to do, done and parked,
+// each sorted fastest first or by priority (a switch, remembered in this
+// browser). Each row shows its category, hours, priority and why. Changing a status
 // writes just that value back; if the file changed meanwhile, nothing is
 // written and the current version is shown instead.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchToolkit, HubError, setToolkitStatus, toolkitOk, type Toolkit, type ToolkitResponse, type ToolkitStatus } from '../api.ts';
 import { shortenHome } from '../ui.tsx';
-import { groupToolkit, isOverdue, STATUS_OPTIONS } from '../toolkit-view.ts';
+import { arrangeToolkit, formatHours, isOverdue, SORTS, STATUS_OPTIONS, type ToolkitSort } from '../toolkit-view.ts';
 import type { SectionProps } from './sections.tsx';
 
 type Item = Toolkit['items'][number];
+
+const SORT_KEY = 'project-hub:toolkit-sort';
+function savedSort(): ToolkitSort {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'priority' ? 'priority' : 'hours';
+  } catch {
+    return 'hours';
+  }
+}
+
+const priorityLook = {
+  high: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+  medium: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  low: 'bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-400',
+} as const;
+
+function PriorityTag({ item }: { item: Item }) {
+  if (item.priority) {
+    return (
+      <span data-testid="toolkit-priority" className={`rounded-full px-1.5 py-px text-[11px] font-medium ${priorityLook[item.priority]}`}>
+        {item.priority}
+      </span>
+    );
+  }
+  if (!item.unknownPriority) return null;
+  return (
+    <span className="rounded-full bg-stone-100 px-1.5 py-px text-[11px] text-stone-600 ring-1 ring-amber-400 dark:bg-stone-800 dark:text-stone-400" title="Not high, medium or low">
+      {item.unknownPriority} ⚠
+    </span>
+  );
+}
 
 const statusLook: Record<ToolkitStatus, string> = {
   'not started': 'border-stone-300 dark:border-stone-700',
@@ -18,12 +51,14 @@ const statusLook: Record<ToolkitStatus, string> = {
   parked: 'border-stone-300 bg-stone-100 text-stone-500 dark:border-stone-700 dark:bg-stone-800',
 };
 
-function Row({ item, showCategory, onChange, busy }: { item: Item; showCategory: boolean; onChange: (s: ToolkitStatus) => void; busy: boolean }) {
+function Row({ item, onChange, busy }: { item: Item; onChange: (s: ToolkitStatus) => void; busy: boolean }) {
   const overdue = isOverdue(item, new Date());
+  const hours = formatHours(item.hours);
   return (
     <li data-testid="toolkit-item" data-status={item.status} className={`flex gap-3 py-2 ${item.status === 'parked' ? 'opacity-60' : ''}`}>
       <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="flex flex-wrap items-baseline gap-x-2">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <PriorityTag item={item} />
           {item.url ? (
             <a href={item.url} target="_blank" rel="noreferrer noopener" className="font-medium hover:underline">
               {item.name}
@@ -31,21 +66,37 @@ function Row({ item, showCategory, onChange, busy }: { item: Item; showCategory:
           ) : (
             <span className="font-medium">{item.name}</span>
           )}
-          {showCategory && <span className="text-xs text-stone-500">{item.category}</span>}
-          {item.cost && <span className="text-xs text-stone-600 dark:text-stone-400">{item.cost}</span>}
-          {item.target && (
-            <span className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-stone-500'}`}>
-              target {item.target}
-              {overdue && ' (past)'}
-            </span>
-          )}
+          <span data-testid="toolkit-category" className="rounded border border-stone-200 px-1 text-[11px] text-stone-500 dark:border-stone-700">
+            {item.category}
+          </span>
         </div>
+        {item.priorityWhy && <p className="text-sm text-stone-700 dark:text-stone-300">{item.priorityWhy}</p>}
         {item.why && <p className="text-sm text-stone-600 dark:text-stone-400">{item.why}</p>}
         {item.notes && (
           <p data-testid="toolkit-notes" className="text-xs whitespace-pre-line text-stone-500">
             {item.notes}
           </p>
         )}
+        <p className="flex flex-wrap gap-x-2 text-xs text-stone-500">
+          {hours && (
+            <span data-testid="toolkit-hours" className="font-medium text-stone-700 dark:text-stone-300">
+              {hours}
+            </span>
+          )}
+          {item.hoursText && (
+            <span className="text-amber-700 dark:text-amber-400" title="hours should be a number or ongoing">
+              {item.hoursText} (not a number)
+            </span>
+          )}
+          {item.timeNote && <span>{item.timeNote}</span>}
+          {item.cost && <span className="text-stone-600 dark:text-stone-400">{item.cost}</span>}
+          {item.target && (
+            <span className={overdue ? 'font-medium text-red-600' : ''}>
+              target {item.target}
+              {overdue && ' (past)'}
+            </span>
+          )}
+        </p>
         {!item.url && item.urlText && <p className="font-mono text-xs break-all text-stone-500">{item.urlText}</p>}
       </div>
       <select
@@ -75,6 +126,15 @@ export function ToolkitSection({ project }: SectionProps) {
   const queryClient = useQueryClient();
   const toolkit = useQuery({ queryKey: ['toolkit', slug], queryFn: () => fetchToolkit(slug) });
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sort, setSortState] = useState<ToolkitSort>(savedSort);
+  const setSort = (s: ToolkitSort) => {
+    setSortState(s);
+    try {
+      localStorage.setItem(SORT_KEY, s);
+    } catch {
+      // A private window or blocked storage: the choice just isn't remembered.
+    }
+  };
   const change = useMutation({
     mutationFn: ({ item, status, version }: { item: Item; status: ToolkitStatus; version: string }) => setToolkitStatus(slug, item, status, version),
     onSuccess: (t, { item, status }) => {
@@ -97,9 +157,10 @@ export function ToolkitSection({ project }: SectionProps) {
   if (!t) return null;
   if (!toolkitOk(t)) return <p className="text-sm text-red-600">{'error' in t ? t.error : 'Unreadable toolkit.yaml'}</p>;
 
-  const groups = groupToolkit(t.items);
+  const groups = arrangeToolkit(t.items, sort);
   return (
     <div className="space-y-3" data-testid="toolkit">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
       <p className="text-sm">
         <strong>
           {t.done} of {t.total} done
@@ -110,6 +171,20 @@ export function ToolkitSection({ project }: SectionProps) {
           {t.items.length > t.total && ` · ${t.items.length - t.total} parked, not counted`}
         </span>
       </p>
+        <div role="group" aria-label="Sort" className="inline-flex shrink-0 rounded-md border border-stone-300 text-xs dark:border-stone-700">
+          {SORTS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={sort === o.id}
+              onClick={() => setSort(o.id)}
+              className={`px-2 py-1 first:rounded-l-md last:rounded-r-md ${sort === o.id ? 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900' : 'hover:bg-stone-100 dark:hover:bg-stone-800'}`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {notice && (
         <p data-testid="toolkit-notice" className={`rounded-md px-3 py-2 text-sm ${notice.ok ? 'bg-stone-100 text-stone-700 dark:bg-stone-900 dark:text-stone-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>
           {notice.text}
@@ -122,7 +197,7 @@ export function ToolkitSection({ project }: SectionProps) {
       ))}
       {t.others.length > 0 && <p className="text-xs text-amber-700">Also found {t.others.map(shortenHome).join(', ')}; only the first is used.</p>}
       {groups.map((g) => (
-        <div key={g.title} data-testid="toolkit-group">
+        <div key={g.status} data-testid="toolkit-group">
           <h3 className="text-xs font-medium tracking-wide text-stone-500 uppercase">
             {g.title} ({g.items.length})
           </h3>
@@ -131,7 +206,6 @@ export function ToolkitSection({ project }: SectionProps) {
               <Row
                 key={`${item.index}:${item.name}`}
                 item={item}
-                showCategory={g.inProgress}
                 busy={change.isPending}
                 onChange={(status) => change.mutate({ item, status, version: t.version })}
               />

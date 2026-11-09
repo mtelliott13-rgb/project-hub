@@ -128,6 +128,11 @@ export function addAgentRoutes(app: Hono, { db, repos, files, ideasFile, agentTo
         target: i.target,
         overdue: !!i.target && i.target < day && i.status !== 'done' && i.status !== 'parked',
         url: i.url,
+        // Hours to finish (a number, "ongoing", or as written when it's neither), and why.
+        hours: i.hours ?? i.hoursText,
+        timeNote: i.timeNote,
+        priority: i.priority ?? i.unknownPriority,
+        priorityWhy: i.priorityWhy,
       })),
       problems: t.problems,
     };

@@ -109,7 +109,7 @@ export function createMcpServer(get: AgentFetch, version = '1.0.0') {
     {
       title: 'Get toolkit',
       description:
-        "A project's toolkit.yaml checklist: X of Y done (parked items don't count) and every item's name, category, status, cost, why, notes, target date, whether it's overdue, and link.",
+        "A project's toolkit.yaml checklist: X of Y done (parked items don't count) and every item's name, category, status, cost, why, notes, target date, whether it's overdue, link, hours to finish (a number, or \"ongoing\"), where that estimate came from (timeNote), priority (high, medium or low) and why (priorityWhy). Items are in file order.",
       inputSchema: { slug },
       annotations: { title: 'Get toolkit', ...READ_ONLY },
     },

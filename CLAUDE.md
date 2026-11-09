@@ -81,7 +81,18 @@ Rules:
 
 ## Toolkit checklist
 
-- A project with `toolkit.yaml` at the top level of one of its repos or folders gets "Toolkit: X of Y done" on its card (parked items don't count) and a Toolkit section on its page: in-progress items first as their own group, then each category in file order. Format: `items:` list of `name`, `category`, `url` (linked only if http/https), `cost`, `why`, optional `target` (YYYY-MM-DD, flagged when past and not done/parked), optional `notes` (shown under `why`), `status` (not started | in progress | done | parked; missing = not started).
+- A project with `toolkit.yaml` at the top level of one of its repos or folders gets "Toolkit: X of Y done" on its card (parked items don't count) and a Toolkit section on its page. Format: an `items:` list. Each item has:
+  - `name`, `category`, `url` (linked only if http/https), `cost`, `why`
+  - optional `target` (YYYY-MM-DD, flagged when past and not done/parked) and `notes` (shown under `why`)
+  - optional `hours` (a number of 0 or more, or `ongoing`) and `time_note`
+  - optional `priority` (high | medium | low) and `priority_why`
+  - `status` (not started | in progress | done | parked; missing = not started)
+- Odd `hours` or `priority` values are shown as written, flagged, and sorted with the blanks.
+- Layout (`arrangeToolkit` in `web/src/toolkit-view.ts`): In progress first as its own group, then To do, Done and Parked. Each group is sorted by a "Fastest first | Priority" switch, remembered in localStorage:
+  - Fastest first (the default): hours low to high, then `ongoing`, then blank.
+  - Priority: high, medium, low, then blank, with ties fastest first.
+  - File order breaks any remaining ties.
+- Each row shows a coloured priority tag (high red, medium amber, low grey), the category as a small label, `priority_why` under the name, and hours with `time_note` beside it. Times under an hour show as minutes ("30 min").
 - The file is the source of truth (Career HQ's lives in `~/career-hq`); the hub keeps no copy. `src/server/toolkit.ts` changes a status by replacing only that value's characters in the text (or adding one `status:` line), re-parses, and refuses unless nothing else changed. A write names the item by position and name plus the file version (sha256) the page loaded; if the file changed since, nothing is written and the 409 carries the current checklist. The first write to a file each hub run backs it up to `~/.project-hub/backups/toolkit/`.
 - The hub watches `toolkit.yaml` in every active project folder (re-set when projects.yaml changes), including files that don't exist yet, so outside edits, new files and deletions reach the card and page without a restart.
 
@@ -147,7 +158,7 @@ Rules:
 ## MCP server (Phase 9, read-only)
 
 - `scripts/mcp.ts` is a stdio MCP server (`@modelcontextprotocol/sdk`, pinned) with five read-only tools defined in `src/server/mcp-server.ts`: `list_projects`, `get_project`, `recent_sessions`, `list_ideas`, `get_toolkit`. It opens no port; it calls the running hub's `/agent/v1/*` routes (`src/server/agent-routes.ts`) with `~/.project-hub/agent-token` (0600, created on hub start, read per call).
-- `/agent/*` is GET only, needs `X-Agent-Token`, and refuses any request with `Origin` or `Sec-Fetch-Site` (so no web page can use it); the Host check applies as everywhere. The agent token works nowhere else, and the page and hook tokens don't work there. Never exposed: notes, Monetize drafts, file contents, tokens (and the hub stores no prompts). `test/phase9.test.ts` pins the tool list and every field returned, so exposing more fails a test until reviewed. Tool answers do go into the Claude conversation that asked.
+- `/agent/*` is GET only, needs `X-Agent-Token`, and refuses any request with `Origin` or `Sec-Fetch-Site` (so no web page can use it); the Host check applies as everywhere. The agent token works nowhere else, and the page and hook tokens don't work there. `get_toolkit` items include `hours`, `timeNote`, `priority` and `priorityWhy`. Never exposed: notes, Monetize drafts, file contents, tokens (and the hub stores no prompts). `test/phase9.test.ts` pins the tool list and every field returned, so exposing more fails a test until reviewed. Tool answers do go into the Claude conversation that asked.
 - Registered as `project-hub` in Claude Code (user scope, `~/.claude.json`) and in the Claude desktop app (`claude_desktop_config.json`, full node path since the app doesn't read `~/.zshrc`; restart the app after changes). `pnpm mcp:plan` shows the diffs, `mcp:install` / `mcp:uninstall` back up and change only the hub's entries (`--only desktop,code,allow`). The `allow` part adds one `permissions.allow` rule per tool to `~/.claude/settings.json` (never a wildcard, so a future tool isn't pre-approved); like the hooks, show that diff and get an OK before writing it.
 - Writes from MCP (adding links or notes) are not built; SPEC.md's Phase 9 lists them.
 

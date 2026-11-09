@@ -65,9 +65,14 @@ function setup() {
       '    cost: free',
       '    why: Shows the work',
       '    target: 2020-01-01',
+      '    hours: 0.5',
+      '    time_note: "Two evenings (estimate)"',
+      '    priority: high',
+      '    priority_why: "First thing recruiters open"',
       '    status: in progress',
       '  - name: Resume',
       '    category: Docs',
+      '    hours: ongoing',
       '    status: done',
       '  - name: Podcast',
       '    category: Presence',
@@ -195,7 +200,12 @@ describe('/agent routes', () => {
     const { body } = await get('/agent/v1/projects/career/toolkit');
     expect(keys(body)).toEqual(['done', 'file', 'items', 'problems', 'project', 'total']);
     expect(body).toMatchObject({ project: 'career', done: 1, total: 2, file: '~/career/toolkit.yaml' });
-    expect(keys(body.items[0])).toEqual(['category', 'cost', 'name', 'notes', 'overdue', 'status', 'target', 'url', 'why']);
+    expect(keys(body.items[0])).toEqual(['category', 'cost', 'hours', 'name', 'notes', 'overdue', 'priority', 'priorityWhy', 'status', 'target', 'timeNote', 'url', 'why']);
+    expect(body.items.map((i: object) => Object.fromEntries(Object.entries(i).filter(([k]) => ['hours', 'timeNote', 'priority', 'priorityWhy'].includes(k))))).toEqual([
+      { hours: 0.5, timeNote: 'Two evenings (estimate)', priority: 'high', priorityWhy: 'First thing recruiters open' },
+      { hours: 'ongoing', timeNote: null, priority: null, priorityWhy: null },
+      { hours: null, timeNote: null, priority: null, priorityWhy: null },
+    ]);
     expect(body.items.map((i: { name: string; status: string; overdue: boolean }) => [i.name, i.status, i.overdue])).toEqual([
       ['Portfolio site', 'in progress', true],
       ['Resume', 'done', false],

@@ -10,6 +10,10 @@
 //       cost: $149
 //       why: Fluency with the terminal most finance teams use
 //       target: 2026-11-15      # optional, YYYY-MM-DD
+//       hours: 10               # optional: hours to finish, or `ongoing`
+//       time_note: "..."        # optional: where `hours` came from
+//       priority: high          # optional: high | medium | low
+//       priority_why: "..."     # optional: why, shown under the name
 //       status: in progress     # not started | in progress | done | parked
 //       notes: >-               # optional, shown under `why`
 //         Free through the campus Bloomberg lab.
@@ -21,6 +25,8 @@ import { isMap, isScalar, isSeq, parse, parseDocument, Scalar, type YAMLMap } fr
 export const TOOLKIT_FILE = 'toolkit.yaml';
 export const STATUSES = ['not started', 'in progress', 'done', 'parked'] as const;
 export type ToolkitStatus = (typeof STATUSES)[number];
+export const PRIORITIES = ['high', 'medium', 'low'] as const;
+export type ToolkitPriority = (typeof PRIORITIES)[number];
 
 export type ToolkitItem = {
   /** Position in `items`, which is how a write names it (with its name, to be sure). */
@@ -37,6 +43,15 @@ export type ToolkitItem = {
   /** The value in the file when it isn't one of STATUSES (it then counts as not done). */
   unknownStatus: string | null;
   notes: string | null;
+  /** Hours to finish (0 or more), `ongoing` for continuous practice, or null when blank or unreadable. */
+  hours: number | 'ongoing' | null;
+  /** The `hours` value as written when it isn't a number or `ongoing` (shown, sorted with the blanks). */
+  hoursText: string | null;
+  timeNote: string | null;
+  priority: ToolkitPriority | null;
+  /** The `priority` value as written when it isn't high, medium or low. */
+  unknownPriority: string | null;
+  priorityWhy: string | null;
 };
 
 export type Toolkit = {
@@ -77,6 +92,22 @@ const httpUrl = (v: string | null) => {
   }
 };
 
+/** `hours`: a number of 0 or more (a quoted one too), or `ongoing`; anything else is kept as text. */
+function hoursOf(v: unknown): Pick<ToolkitItem, 'hours' | 'hoursText'> {
+  const t = str(v)?.trim() ?? null;
+  if (t === null) return { hours: null, hoursText: null };
+  if (t.toLowerCase() === 'ongoing') return { hours: 'ongoing', hoursText: null };
+  const n = typeof v === 'number' ? v : /^\d+(\.\d+)?$|^\.\d+$/.test(t) ? Number(t) : NaN;
+  return Number.isFinite(n) && n >= 0 ? { hours: n, hoursText: null } : { hours: null, hoursText: t };
+}
+
+function priorityOf(v: unknown): Pick<ToolkitItem, 'priority' | 'unknownPriority'> {
+  const t = str(v)?.trim() ?? null;
+  if (t === null) return { priority: null, unknownPriority: null };
+  const lower = t.toLowerCase();
+  return (PRIORITIES as readonly string[]).includes(lower) ? { priority: lower as ToolkitPriority, unknownPriority: null } : { priority: null, unknownPriority: t };
+}
+
 /** Reads the checklist from the file's text. Throws ToolkitError(400) if it isn't a toolkit. */
 export function parseToolkit(text: string, file: string): Toolkit {
   let data: unknown;
@@ -110,6 +141,10 @@ export function parseToolkit(text: string, file: string): Toolkit {
       status: known ? (s as ToolkitStatus) : 'not started',
       unknownStatus: known ? null : str(it.status),
       notes: str(it.notes),
+      ...hoursOf(it.hours),
+      timeNote: str(it.time_note),
+      ...priorityOf(it.priority),
+      priorityWhy: str(it.priority_why),
     });
   });
   const counted = items.filter((i) => i.status !== 'parked');

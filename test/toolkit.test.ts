@@ -8,7 +8,7 @@ import { MIGRATIONS_DIR } from '../src/server/config.ts';
 import { openDb } from '../src/server/db/index.ts';
 import { watchFile } from '../src/server/project-store.ts';
 import { findToolkitFiles, parseToolkit, setToolkitStatus, versionOf, writeToolkitStatus } from '../src/server/toolkit.ts';
-import { groupToolkit, isOverdue } from '../web/src/toolkit-view.ts';
+import { arrangeToolkit, formatHours, isOverdue } from '../web/src/toolkit-view.ts';
 import { HUB, PAGE_GET, testDeps } from './helpers.ts';
 
 // Hand-written, with everything the hub must leave alone: comments (own-line
@@ -22,6 +22,10 @@ items:
     cost: $149
     why: Fluency with the terminal most finance teams use
     target: 2026-11-15
+    hours: 10
+    time_note: "Guides say 8–12 hours (estimate)"
+    priority: high
+    priority_why: "Terminal fluency for finance roles"
     status: in progress   # started Oct 20
     notes: keep my login in 1Password
 
@@ -30,6 +34,8 @@ items:
     url: "https://www.cfainstitute.org/programs/cfa-program"
     cost: "$1,250 + $350 enrollment"
     why: The credential most asset managers ask for
+    hours: 300
+    priority: low
     status: 'not started'
     notes: >-
       Eligible from June 2025 (23 months before graduation).
@@ -40,18 +46,37 @@ items:
     url: javascript:alert(1)
     cost: free
     why: Faster models
+    hours: ongoing
+    priority: Medium
 
   - name: SQL for analysts
     category: Software
     url: www.example.com/sql
     cost: 0
     why: Pull my own data
+    hours: 0.5
+    priority: high
     status: done
 
   - name: Python course
     category: Software
     why: Automate reports
+    priority: urgent
     status: parked
+`;
+
+/** Two more items, for hours and priority edge cases. */
+const MORE = `${FILE}
+  - name: Git basics
+    category: Software
+    hours: 3-5
+    priority: medium
+
+  - name: Quick cert
+    category: Credentials
+    hours: "0.25"
+    time_note: 'Official page: "15 mins"'
+    priority: high
 `;
 
 const dirs: string[] = [];
@@ -83,6 +108,12 @@ describe('reading toolkit.yaml', () => {
       status: 'in progress',
       unknownStatus: null,
       notes: 'keep my login in 1Password',
+      hours: 10,
+      hoursText: null,
+      timeNote: 'Guides say 8–12 hours (estimate)',
+      priority: 'high',
+      unknownPriority: null,
+      priorityWhy: 'Terminal fluency for finance roles',
     });
     expect(t.items[1]).toMatchObject({ name: 'CFA Level I', cost: '$1,250 + $350 enrollment', status: 'not started' });
     expect(t.items[2].status).toBe('not started');
@@ -93,6 +124,16 @@ describe('reading toolkit.yaml', () => {
     expect(t.items[1].notes).toBe('Eligible from June 2025 (23 months before graduation). Re-check the fee before registering.');
     expect(t.items[4].notes).toBeNull();
     expect(parseToolkit('items:\n  - name: A\n    notes: "Confirmed free (\\"FREE\\")."\n', 'f').items[0].notes).toBe('Confirmed free ("FREE").');
+  });
+
+  it('reads hours, time_note, priority and priority_why, keeping odd values as written', () => {
+    const by = Object.fromEntries(parseToolkit(MORE, 'f').items.map((i) => [i.name, i]));
+    expect(by['Bloomberg Market Concepts']).toMatchObject({ hours: 10, hoursText: null, timeNote: 'Guides say 8–12 hours (estimate)', priority: 'high', priorityWhy: 'Terminal fluency for finance roles' });
+    expect(by['Excel shortcuts course']).toMatchObject({ hours: 'ongoing', priority: 'medium', unknownPriority: null });
+    expect(by['Quick cert']).toMatchObject({ hours: 0.25, timeNote: 'Official page: "15 mins"' });
+    expect(by['Git basics']).toMatchObject({ hours: null, hoursText: '3-5' });
+    expect(by['Python course']).toMatchObject({ hours: null, hoursText: null, priority: null, unknownPriority: 'urgent', timeNote: null, priorityWhy: null });
+    expect(parseToolkit('items:\n  - name: A\n    hours: -2\n', 'f').items[0]).toMatchObject({ hours: null, hoursText: '-2' });
   });
 
   it('links only http and https', () => {
@@ -149,7 +190,7 @@ describe('writing one status', () => {
 
   it("adds a status line, at the item's indent, when it had none", () => {
     const out = setToolkitStatus(FILE, 2, 'Excel shortcuts course', 'in progress');
-    expect(out).toBe(FILE.replace('    why: Faster models\n', '    why: Faster models\n    status: in progress\n'));
+    expect(out).toBe(FILE.replace('    priority: Medium\n', '    priority: Medium\n    status: in progress\n'));
     const last = 'items:\n- name: A\n  cost: 1   # no status yet\n';
     expect(setToolkitStatus(last, 0, 'A', 'done')).toBe('items:\n- name: A\n  cost: 1   # no status yet\n  status: done\n');
   });
@@ -192,15 +233,29 @@ describe('writing one status', () => {
 });
 
 describe('the page layout', () => {
-  const items = parseToolkit(FILE, 'f').items;
+  const items = parseToolkit(MORE, 'f').items;
 
-  it('puts in-progress items in their own group first, then categories in file order', () => {
-    expect(groupToolkit(items).map((g) => [g.title, g.items.map((i) => i.name)])).toEqual([
+  const names = (sort?: 'hours' | 'priority') => arrangeToolkit(items, sort).map((g) => [g.title, g.items.map((i) => i.name)]);
+
+  it('in progress first, then to do fastest first (ongoing, then blank or unreadable, last), then done, then parked', () => {
+    expect(names()).toEqual([
       ['In progress', ['Bloomberg Market Concepts']],
-      ['Finance', ['CFA Level I']],
-      ['Software', ['Excel shortcuts course', 'SQL for analysts', 'Python course']],
+      ['To do', ['Quick cert', 'CFA Level I', 'Excel shortcuts course', 'Git basics']],
+      ['Done', ['SQL for analysts']],
+      ['Parked', ['Python course']],
     ]);
-    expect(groupToolkit([])).toEqual([]);
+    expect(arrangeToolkit([])).toEqual([]);
+  });
+
+  it('by priority: high, medium, low, then blank; ties fastest first, then file order', () => {
+    expect(names('priority')[1]).toEqual(['To do', ['Quick cert', 'Excel shortcuts course', 'Git basics', 'CFA Level I']]);
+    const tie = parseToolkit('items:\n  - name: B\n    priority: high\n  - name: A\n    priority: high\n  - name: C\n', 'f').items;
+    expect(arrangeToolkit(tie, 'priority')[0].items.map((i) => i.name)).toEqual(['B', 'A', 'C']);
+    expect(arrangeToolkit(tie, 'hours')[0].items.map((i) => i.name)).toEqual(['B', 'A', 'C']);
+  });
+
+  it('shows hours as minutes under an hour', () => {
+    expect([0.25, 0.5, 0.6, 1, 3.1, 300, 'ongoing' as const, null].map(formatHours)).toEqual(['15 min', '30 min', '36 min', '1 h', '3.1 h', '300 h', 'ongoing', null]);
   });
 
   it('flags a target date that has passed, unless the item is done or parked', () => {
