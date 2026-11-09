@@ -1,4 +1,4 @@
-// Career HQ's launch buttons (Open in Word, Fill application, Build packet):
+// Career HQ's launch buttons (Open letter/resume in Word, Rebuild PDF, Fill application, Build packet):
 // one mutation each section shares, so only one runs at a time and the result
 // (Career HQ's one line, or its error plus the command to copy) is shown.
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -7,8 +7,10 @@ import { shortenHome } from '../ui.tsx';
 
 type Notice = { ok: boolean; text: string; output?: string; command?: string };
 
-const WHAT: Record<CareerLaunchKind, string> = {
-  'open-letter': 'Open in Word',
+export const WHAT: Record<CareerLaunchKind, string> = {
+  'open-letter': 'Open letter in Word',
+  'open-resume': 'Open resume in Word',
+  'resume-pdf': 'Rebuild PDF',
   'launch-apply': 'Fill application',
   'launch-build': 'Build packet',
 };
@@ -28,9 +30,9 @@ export function useCareerLaunch(slug: string, setNotice: (n: Notice | null) => v
       setNotice({
         ok: true,
         text:
-          kind === 'open-letter'
-            ? r.message
-            : `${r.message}. Watch it in that Terminal window; press Ctrl+C or close the window to stop it.`,
+          kind === 'launch-apply' || kind === 'launch-build'
+            ? `${r.message}. Watch it in that Terminal window; press Ctrl+C or close the window to stop it.`
+            : r.message,
       }),
     onError: (e: Error, { kind, label }) => {
       const body = e instanceof HubError ? e.body : {};

@@ -6,17 +6,18 @@
 // fill_sheet.md) with a Copy button on every field except notes and missing
 // values, and character counts against any limit. A pending shorter draft that
 // fits gets an Approve button, which runs Career HQ's approve-draft with the
-// SHA-256 of the draft as shown. Open in Word, and Fill application (reviewed
-// packets only), run Career HQ's open-letter and launch-apply; launch-apply
-// opens a Terminal window running Claude Code's /apply, which stops before
-// submit. Everything is read from local disk by the hub.
+// SHA-256 of the draft as shown. Open letter in Word, Open resume in Word,
+// Rebuild PDF (a resume edited after its PDF) and Fill application (reviewed
+// packets only) run Career HQ's open-letter, open-resume, resume_state.py pdf
+// and launch-apply; launch-apply opens a Terminal window running Claude Code's
+// /apply, which stops before submit. Everything is read from local disk by the hub.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { createContext, useContext, useState, type MouseEvent } from 'react';
 import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sha256Hex, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
 import { approveShorterDraft, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
-import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch } from './career-launch.ts';
+import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch, WHAT } from './career-launch.ts';
 import type { SectionProps } from './sections.tsx';
 
 const statusLook: Record<AppStatus, string> = {
@@ -116,6 +117,12 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
       {app.notes && <p className="mt-1 text-sm whitespace-pre-line text-stone-600 dark:text-stone-400">{app.notes}</p>}
       {app.problems.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {app.problems.join(' · ')}</p>}
       {app.letter === 'edited' && <LetterNotSynced app={app} repo={repo} />}
+      {app.resumePdfOutdated && <ResumePdfOutdated app={app} repo={repo} busy={busy} launching={launching} onLaunch={onLaunch} />}
+      {(app.resume === 'edited' || app.resume === 'edited_pdf_outdated') && !app.resumePdfOutdated && (
+        <p className="mt-1 text-xs text-stone-500" data-testid="resume-edited">
+          Resume edited in Word · rebuilds keep your edits
+        </p>
+      )}
       {app.limits && limitSummary(app.limits) && (
         <p className={`mt-1 text-xs font-medium ${app.limits.over ? 'text-red-600 dark:text-red-400' : 'text-violet-700 dark:text-violet-300'}`} data-testid="limit-flags">
           ⚠ Fill sheet: {limitSummary(app.limits)}
@@ -164,9 +171,14 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
         >
           Cover letter PDF
         </Action>
+        {app.files.resumeDocx && (
+          <Action small disabled={busy} title="Runs Career HQ's open-resume: opens resume.docx in Microsoft Word (changes no file)" onClick={() => onLaunch('open-resume')}>
+            {launching === 'open-resume' ? 'Opening…' : 'Open resume in Word'}
+          </Action>
+        )}
         {app.files.coverLetterDocx && (
           <Action small disabled={busy} title="Runs Career HQ's open-letter: opens cover_letter.docx in Microsoft Word (changes no file)" onClick={() => onLaunch('open-letter')}>
-            {launching === 'open-letter' ? 'Opening…' : 'Open in Word'}
+            {launching === 'open-letter' ? 'Opening…' : 'Open letter in Word'}
           </Action>
         )}
         {app.files.fillSheet && (
@@ -240,7 +252,7 @@ export function ApplicationsSection({ project, run }: SectionProps) {
       )}
       {launch.isPending && (
         <p className="inline-flex items-center gap-1.5 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300" role="status">
-          <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's {launch.variables?.kind} command…
+          <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's {launch.variables ? WHAT[launch.variables.kind] : ''} command…
         </p>
       )}
       {notice && <Notice notice={notice} />}
@@ -290,6 +302,33 @@ function LetterNotSynced({ app, repo }: { app: Application; repo: string }) {
       <div className="flex items-start gap-2">
         <code className="min-w-0 flex-1 rounded bg-amber-50 px-2 py-1 break-all text-stone-800 dark:bg-amber-950 dark:text-stone-200">{command}</code>
         <CopyButton value={command} label="the sync command" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * resume.pdf is older than your Word edits to resume.docx, so Fill application
+ * leaves the resume out. Rebuild PDF runs Career HQ's resume_state.py pdf (Word
+ * saves the PDF); the command to copy stays as the fallback.
+ */
+function ResumePdfOutdated({ app, repo, busy, launching, onLaunch }: { app: Application; repo: string; busy: boolean; launching: CareerLaunchKind | null; onLaunch: (kind: CareerLaunchKind) => void }) {
+  const command = `cd ${repo} && uv run python scripts/resume_state.py pdf ${quoteArg(app.id)}`;
+  return (
+    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="resume-pdf-outdated">
+      <p>
+        ⚠ Resume has Word edits newer than resume.pdf
+        {app.status === 'reviewed' ? ', so Fill application will leave the resume out' : ''}. Close the resume in Word, then:
+      </p>
+      <div className="flex flex-wrap items-start gap-2">
+        <Action small disabled={busy} title="Runs Career HQ's resume_state.py pdf: Word saves resume.pdf from your edited resume.docx" onClick={() => onLaunch('resume-pdf')}>
+          {launching === 'resume-pdf' ? 'Rebuilding…' : 'Rebuild PDF'}
+        </Action>
+        <span className="self-center">or run it yourself:</span>
+      </div>
+      <div className="flex items-start gap-2">
+        <code className="min-w-0 flex-1 rounded bg-amber-50 px-2 py-1 break-all text-stone-800 dark:bg-amber-950 dark:text-stone-200">{command}</code>
+        <CopyButton value={command} label="the PDF command" />
       </div>
     </div>
   );

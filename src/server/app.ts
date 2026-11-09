@@ -42,7 +42,11 @@ import {
   launchBuildSchema,
   openLetter,
   openLetterSchema,
+  openResume,
+  openResumeSchema,
   queueStatusSchema,
+  resumePdf,
+  resumePdfSchema,
   type QueueStatusResult,
 } from './queue-status.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
@@ -119,7 +123,7 @@ export function createApp(deps: AppDeps) {
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
-  // Projects with a Career HQ command (status, approve-draft, open-letter, launch-apply, launch-build) running now.
+  // Projects with a Career HQ command (status, approve-draft, open-letter, open-resume, resume-pdf, launch-apply, launch-build) running now.
   const queueRuns = new Set<string>();
   const app = new Hono();
 
@@ -263,8 +267,9 @@ export function createApp(deps: AppDeps) {
 
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
-    // Career HQ's own commands (a status, approving a draft, Open in Word, Fill
-    // application, Build packet): run in its repo, and report its result.
+    // Career HQ's own commands (a status, approving a draft, Open letter/resume
+    // in Word, Rebuild PDF, Fill application, Build packet): run in its repo,
+    // and report its result.
     const kind = (body as { kind?: unknown } | null)?.kind;
     if ((CAREER_KINDS as readonly unknown[]).includes(kind)) {
       const careerDeps = { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns };
@@ -281,6 +286,10 @@ export function createApp(deps: AppDeps) {
             return one(approveDraftSchema, approveDraft);
           case 'open-letter':
             return one(openLetterSchema, openLetter);
+          case 'open-resume':
+            return one(openResumeSchema, openResume);
+          case 'resume-pdf':
+            return one(resumePdfSchema, resumePdf);
           case 'launch-apply':
             return one(launchApplySchema, launchApply);
           default:

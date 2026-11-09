@@ -18,8 +18,12 @@ export const QUEUE_FILES = ['jobs/queue.yaml', 'jobs/queue/review_queue.yaml'] a
 export const PACKET_FILES = { resume: 'resume.pdf', 'cover-letter': 'cover_letter.pdf' } as const;
 /** The cover letter you edit in Word (Career HQ's open-letter command opens it). */
 export const LETTER_DOCX = 'cover_letter.docx';
+/** The resume you edit in Word (Career HQ's open-resume command opens it). */
+export const RESUME_DOCX = 'resume.docx';
 /** The queue's `letter` values (SPEC.md "Editing the cover letter in Word"); `edited` means Word edits aren't synced yet. */
 export const LETTER_STATES = ['generated', 'edited', 'synced'] as const;
+/** The queue's `resume` field (Career HQ's resume_state.py). edited_pdf_outdated: resume.pdf is older than your Word edits. */
+export const RESUME_STATES = ['generated', 'edited', 'edited_pdf_outdated'] as const;
 export type PacketFile = keyof typeof PACKET_FILES;
 const FILL_SHEET_MD = 'fill_sheet.md';
 const FILL_SHEET_JSON = 'fill_sheet.json';
@@ -55,8 +59,16 @@ export type Application = {
   notes: string | null;
   /** State of cover_letter.docx as the queue reports it (generated | edited | synced), as written; null when not set. */
   letter: string | null;
+  /** State of resume.docx as the queue reports it (generated | edited | edited_pdf_outdated), as written; null when not set. */
+  resume: string | null;
+  /**
+   * The queue calls the resume edited (edited or edited_pdf_outdated) and
+   * resume.pdf is missing or older than resume.docx, by their modification
+   * times now (Career HQ's own rule), so it's right as soon as you save in Word.
+   */
+  resumePdfOutdated: boolean;
   /** Which packet files exist (only inside the repo; see packetDir). */
-  files: { resume: boolean; coverLetter: boolean; coverLetterDocx: boolean; fillSheet: boolean };
+  files: { resume: boolean; resumeDocx: boolean; coverLetter: boolean; coverLetterDocx: boolean; fillSheet: boolean };
   /** Missing required fields and the like, shown on the card. */
   problems: string[];
   /** Fields over their limit and pending shorter drafts in its fill sheet (added by withLimits; null if unread). */
@@ -147,6 +159,18 @@ export function packetFile(root: string, packet: string | null, name: string): s
   }
 }
 
+/** resume.docx exists and resume.pdf is missing or older (mtimes; read only). */
+export function pdfOlderThanDocx(root: string, packet: string | null): boolean {
+  const docx = packetFile(root, packet, RESUME_DOCX);
+  if (!docx) return false;
+  const pdf = packetFile(root, packet, PACKET_FILES.resume);
+  try {
+    return !pdf || fs.statSync(pdf).mtimeMs < fs.statSync(docx).mtimeMs;
+  } catch {
+    return true;
+  }
+}
+
 export function parseQueue(text: string, file: string): Queue {
   let data: unknown;
   try {
@@ -177,6 +201,8 @@ export function parseQueue(text: string, file: string): Queue {
     if (str(it.url) && !httpUrl(str(it.url))) issues.push('url is not an http(s) link');
     const letter = str(it.letter);
     if (letter && !(LETTER_STATES as readonly string[]).includes(letter)) issues.push(`unknown letter state "${letter}"`);
+    const resume = str(it.resume);
+    if (resume && !(RESUME_STATES as readonly string[]).includes(resume)) issues.push(`unknown resume state "${resume}"`);
     const packet = str(it.packet);
     if (packet && !packetDir(root, packet)) issues.push(`packet folder not found inside ${path.basename(root)}: ${packet}`);
     items.push({
@@ -196,8 +222,11 @@ export function parseQueue(text: string, file: string): Queue {
       packet,
       notes: str(it.notes),
       letter,
+      resume,
+      resumePdfOutdated: (resume === 'edited' || resume === 'edited_pdf_outdated') && pdfOlderThanDocx(root, packet),
       files: {
         resume: !!packetFile(root, packet, PACKET_FILES.resume),
+        resumeDocx: !!packetFile(root, packet, RESUME_DOCX),
         coverLetter: !!packetFile(root, packet, PACKET_FILES['cover-letter']),
         coverLetterDocx: !!packetFile(root, packet, LETTER_DOCX),
         fillSheet: !!(packetFile(root, packet, FILL_SHEET_JSON) || packetFile(root, packet, FILL_SHEET_MD)),

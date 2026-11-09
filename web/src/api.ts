@@ -200,12 +200,13 @@ export const approveShorterDraft = (slug: string, id: string, question: number, 
   hub<{ command: string; message: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'approve-draft', slug, id, question, sha256 } });
 
 /**
- * Career HQ's launch commands (open-letter, launch-apply, launch-build): each
- * returns within seconds with Career HQ's one line; launch-apply and
+ * Career HQ's launch commands (open-letter, open-resume, resume-pdf,
+ * launch-apply, launch-build): each returns with Career HQ's one line
+ * (resume-pdf waits for Word's export, up to 2 minutes); launch-apply and
  * launch-build leave a Terminal window running Claude Code. On failure the
  * HubError's body has `command` (to copy) and `output`.
  */
-export type CareerLaunchKind = 'open-letter' | 'launch-apply' | 'launch-build';
+export type CareerLaunchKind = 'open-letter' | 'open-resume' | 'resume-pdf' | 'launch-apply' | 'launch-build';
 export const runCareerLaunch = (kind: CareerLaunchKind, slug: string, id: string) =>
   hub<{ command: string; message: string }>('/api/launch', { method: 'POST', body: { kind, slug, id } });
 

@@ -2,6 +2,8 @@
 //   uv run python scripts/review_queue.py status <id> <status>
 //   uv run python scripts/review_queue.py approve-draft <id> <question-number> <draft-sha256>
 //   uv run python scripts/review_queue.py open-letter <id>       (opens cover_letter.docx in Word)
+//   uv run python scripts/review_queue.py open-resume <id>       (opens resume.docx in Word)
+//   uv run python scripts/resume_state.py pdf <id>               (Word saves resume.pdf from your edited resume.docx)
 //   uv run python scripts/review_queue.py launch-apply <id>      (Terminal: claude --chrome "/apply <id>")
 //   uv run python scripts/review_queue.py launch-build <posting> (Terminal: claude --chrome "/build-packet <posting>")
 // The launch commands return in seconds: Career HQ itself opens a new Terminal
@@ -23,11 +25,14 @@ import { shellQuote } from './launcher.ts';
 import { APP_STATUSES } from './queue-rules.ts';
 
 export const QUEUE_SCRIPT = 'scripts/review_queue.py';
+export const RESUME_SCRIPT = 'scripts/resume_state.py';
 /** Career HQ's ids: YYYY-MM-DD then lowercase words joined by single dashes. Nothing else reaches the command. */
 export const APP_ID = /^\d{4}-\d{2}-\d{2}(-[a-z0-9]+)+$/;
 const TIMEOUT_MS = 60_000;
 /** Career HQ's doc for the launch buttons allows 90 s (they return within a few). */
 const LAUNCH_TIMEOUT_MS = 90_000;
+/** Word's PDF export (Career HQ allows it 60 s, plus a 30 s check and opening Word). */
+const PDF_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT = 64 * 1024;
 const OUTPUT_LINES = 20;
 
@@ -54,7 +59,7 @@ export const approveDraftSchema = z.object({
 export type ApproveDraftRequest = z.infer<typeof approveDraftSchema>;
 
 const packetId = z.string().max(200).regex(APP_ID, 'must look like YYYY-MM-DD-company-title');
-/** "Open in Word": the packet's cover_letter.docx. */
+/** "Open letter in Word": the packet's cover_letter.docx. */
 export const openLetterSchema = z.object({ kind: z.literal('open-letter'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
 /** "Fill application": only for a packet the queue shows as reviewed. */
 export const launchApplySchema = z.object({ kind: z.literal('launch-apply'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
@@ -65,12 +70,18 @@ export const launchBuildSchema = z.object({
   id: z.string().max(200).regex(POSTING_ID, "must be the feed's exact <system>:<board>:<job id>"),
   dryRun: z.boolean().optional(),
 });
+/** "Open resume in Word": the packet's resume.docx. */
+export const openResumeSchema = z.object({ kind: z.literal('open-resume'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
+/** "Rebuild PDF": only while the queue shows the resume as edited_pdf_outdated. */
+export const resumePdfSchema = z.object({ kind: z.literal('resume-pdf'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
 export type OpenLetterRequest = z.infer<typeof openLetterSchema>;
+export type OpenResumeRequest = z.infer<typeof openResumeSchema>;
+export type ResumePdfRequest = z.infer<typeof resumePdfSchema>;
 export type LaunchApplyRequest = z.infer<typeof launchApplySchema>;
 export type LaunchBuildRequest = z.infer<typeof launchBuildSchema>;
 
 /** Every Career HQ command the page can run, by launch kind. */
-export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'launch-apply', 'launch-build'] as const;
+export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'open-resume', 'resume-pdf', 'launch-apply', 'launch-build'] as const;
 
 export type QueueStatusDeps = {
   project: (slug: string) => Project | undefined;
@@ -98,10 +109,10 @@ function realFileInside(root: string, rel: string): string | null {
 const tilde = (p: string, home: string) => (p === home || p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p);
 
 /** The command as you'd type it in Terminal (also the copyable fallback). */
-export function copyCommand(cwd: string, args: string[], home: string) {
+export function copyCommand(cwd: string, args: string[], home: string, script = QUEUE_SCRIPT) {
   const under = cwd.startsWith(home + path.sep) ? cwd.slice(home.length + 1) : null;
   const dir = under === null ? shellQuote(cwd) : `~/${shellQuote(under)}`;
-  return `cd ${dir} && uv run python ${QUEUE_SCRIPT} ${args.map(shellQuote).join(' ')}`;
+  return `cd ${dir} && uv run python ${script} ${args.map(shellQuote).join(' ')}`;
 }
 
 const lastLines = (text: string) => text.trimEnd().split('\n').slice(-OUTPUT_LINES).join('\n');
@@ -166,9 +177,9 @@ function find(slug: string, id: string, deps: QueueStatusDeps): Found | QueueSta
 }
 
 /**
- * Checks the script and uv, then (unless dryRun) runs `review_queue.py <args>`
- * in the repo, one per project at a time. `check` confirms the command did
- * what it said, once it exits 0.
+ * Checks the script and uv, then (unless dryRun) runs `<script> <args>`
+ * (review_queue.py unless named) in the repo, one per project at a time.
+ * `check` confirms the command did what it said, once it exits 0.
  */
 async function runInRepo(
   f: Where,
@@ -178,13 +189,14 @@ async function runInRepo(
   deps: QueueStatusDeps,
   check: (run: { output: string; stdout: string }, command: string) => QueueStatusResult,
   timeoutMs = TIMEOUT_MS,
+  script = QUEUE_SCRIPT,
 ): Promise<QueueStatusResult> {
   const { p, root } = f;
-  const command = copyCommand(root, args, deps.home);
-  if (!realFileInside(root, QUEUE_SCRIPT)) {
-    return { status: 409, body: { error: `No ${QUEUE_SCRIPT} inside ${tilde(root, deps.home)}`, command } };
+  const command = copyCommand(root, args, deps.home, script);
+  if (!realFileInside(root, script)) {
+    return { status: 409, body: { error: `No ${script} inside ${tilde(root, deps.home)}`, command } };
   }
-  const argv = [deps.uvPath, 'run', 'python', QUEUE_SCRIPT, ...args];
+  const argv = [deps.uvPath, 'run', 'python', script, ...args];
   if (dryRun) return { status: 200, body: { ok: true, dryRun: true, command, cwd: root, argv } };
   try {
     if (!fs.statSync(deps.uvPath).isFile()) throw new Error();
@@ -258,7 +270,7 @@ export async function approveDraft(req: ApproveDraftRequest, deps: QueueStatusDe
 /** Career HQ's one-line answer (the last line it printed), or a fallback. */
 const lastLine = (stdout: string, fallback: string) => stdout.trim().split('\n').filter(Boolean).at(-1) ?? fallback;
 
-/** "Open in Word": Career HQ opens <packet>/cover_letter.docx in Microsoft Word and changes no file. */
+/** "Open letter in Word": Career HQ opens <packet>/cover_letter.docx in Microsoft Word and changes no file. */
 export async function openLetter(req: OpenLetterRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
   const f = find(req.slug, req.id, deps);
   if ('status' in f && 'body' in f) return f;
@@ -267,6 +279,52 @@ export async function openLetter(req: OpenLetterRequest, deps: QueueStatusDeps):
     status: 200,
     body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Word.'), output: run.output },
   }));
+}
+
+/** "Open resume in Word": Career HQ opens <packet>/resume.docx in Microsoft Word and changes no file. */
+export async function openResume(req: OpenResumeRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const f = find(req.slug, req.id, deps);
+  if ('status' in f && 'body' in f) return f;
+  if (!f.item.files.resumeDocx) return { status: 409, body: { error: `${req.id} has no resume.docx yet` } };
+  return runInRepo(f, ['open-resume', req.id], 'open-resume', req.dryRun, deps, (run, command) => ({
+    status: 200,
+    body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Word.'), output: run.output },
+  }));
+}
+
+/**
+ * "Rebuild PDF": Career HQ has Word save resume.pdf from your edited
+ * resume.docx (`resume_state.py pdf <id>`). Only while the queue calls the
+ * resume edited and resume.pdf is older than resume.docx (their mtimes, read
+ * now). Success needs exit 0 and resume.pdf no longer older.
+ */
+export async function resumePdf(req: ResumePdfRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const f = find(req.slug, req.id, deps);
+  if ('status' in f && 'body' in f) return f;
+  if (!f.item.files.resumeDocx) return { status: 409, body: { error: `${req.id} has no resume.docx yet` } };
+  if (!f.item.resumePdfOutdated) {
+    const why = f.item.resume === 'edited' || f.item.resume === 'edited_pdf_outdated' ? 'resume.pdf is already as new as resume.docx' : `the queue shows the resume as "${f.item.resume ?? 'not set'}", not edited`;
+    return { status: 409, body: { error: `Nothing to rebuild for ${req.id}: ${why}` } };
+  }
+  return runInRepo(
+    f,
+    ['pdf', req.id],
+    'resume_state.py pdf',
+    req.dryRun,
+    deps,
+    (run, command) => {
+      const now = queueNow(f.p);
+      const item = now?.items.find((i) => i.id === req.id);
+      if (!now || !item || item.resumePdfOutdated) {
+        return { status: 500, body: { error: `The command finished, but ${item ? 'resume.pdf is still older than resume.docx' : "the queue couldn't be read afterwards"}`, output: run.output, command } };
+      }
+      // Career HQ's answer ("…: Word saved resume.pdf from resume.docx (1 page)"), plus a page-count warning if it printed one.
+      const message = run.stdout.trim().split('\n').filter(Boolean).join(' ') || 'Word saved resume.pdf.';
+      return { status: 200, body: { ok: true, command, message, output: run.output, queue: now } };
+    },
+    PDF_TIMEOUT_MS,
+    RESUME_SCRIPT,
+  );
 }
 
 /**
