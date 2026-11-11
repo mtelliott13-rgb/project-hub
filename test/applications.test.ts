@@ -1140,6 +1140,11 @@ describe('Add a job: launch-manual with a link, pasted text, or both', () => {
     const dup = await s.launch({ url: LINK });
     expect(dup.status).toBe(500);
     expect(dup.body.error).toBe('error: that link already has a packet: 2026-11-03-acme-energy-data-analyst-intern (exit 1)');
+    // The packet is named from the queue, so the page can jump to its card.
+    expect(dup.body.duplicate).toEqual({ id: '2026-11-03-acme-energy-data-analyst-intern', company: 'Acme Energy', title: 'Data Analyst Intern' });
+    // A packet the queue doesn't list (rebuilt since, or a typo) just shows the line.
+    fs.writeFileSync(s.file, QUEUE.replace(/  - id: "2026-11-03-acme[\s\S]*?\n\n/, ''));
+    expect((await s.launch({ url: LINK })).body.duplicate).toBeUndefined();
     expect(dup.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);
     const withText = await s.launch({ text: POSTING, url: LINK });
     expect(withText.body.command).toBe(`cd ~/career && pbpaste | uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);

@@ -83,6 +83,7 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
   const facts = [app.location, app.added && `added ${fmtDate(app.added)}`, app.status === 'submitted' && app.submittedOn && `submitted ${fmtDate(app.submittedOn)}`].filter(Boolean);
   return (
     <li
+      id={cardId(app.id)}
       data-testid="application"
       data-status={app.status}
       onClick={open}
@@ -337,6 +338,7 @@ function AddJob({ slug, busy, setNotice }: { slug: string; busy: boolean; setNot
         text: `Add a job: ${e.message}`,
         output: typeof body.output === 'string' && body.output ? body.output : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
+        duplicate: isDuplicate(body.duplicate) ? body.duplicate : undefined,
       });
     },
     onSettled: () => {
@@ -426,13 +428,38 @@ function ResumePdfOutdated({ app, repo, busy, launching, onLaunch }: { app: Appl
   );
 }
 
-export type NoticeValue = { ok: boolean; text: string; output?: string; command?: string };
+/** The packet Career HQ said a link already has (Add a job), as the queue lists it. */
+type Duplicate = { id: string; company: string; title: string };
+const isDuplicate = (v: unknown): v is Duplicate =>
+  !!v && typeof v === 'object' && ['id', 'company', 'title'].every((k) => typeof (v as Record<string, unknown>)[k] === 'string');
 
-export function Notice({ notice }: { notice: { ok: boolean; text: string; output?: string; command?: string } }) {
+/** The DOM id of an application's card, to jump to it. */
+const cardId = (id: string) => `application-${id}`;
+
+/** Scrolls to an application's card and outlines it for a moment. */
+function showCard(id: string) {
+  const el = document.getElementById(cardId(id));
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const ring = ['ring-2', 'ring-sky-500', 'ring-offset-2'];
+  el.classList.add(...ring);
+  setTimeout(() => el.classList.remove(...ring), 2000);
+}
+
+export type NoticeValue = { ok: boolean; text: string; output?: string; command?: string; duplicate?: Duplicate };
+
+export function Notice({ notice }: { notice: NoticeValue }) {
   if (notice.ok) return <p className="rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300">{notice.text}</p>;
   return (
     <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200" role="alert" data-testid="status-failed">
       <p>{notice.text}</p>
+      {notice.duplicate && (
+        <p>
+          <button type="button" className="font-medium underline hover:no-underline" data-testid="duplicate-link" onClick={() => showCard(notice.duplicate!.id)}>
+            Go to {notice.duplicate.company} · {notice.duplicate.title} ↓
+          </button>
+        </p>
+      )}
       {notice.output && <pre className="max-h-48 overflow-auto rounded bg-white/70 p-2 text-xs whitespace-pre-wrap text-stone-800 dark:bg-black/30 dark:text-stone-200">{notice.output}</pre>}
       {notice.command && (
         <div>

@@ -441,7 +441,7 @@ export async function launchManual(req: LaunchManualRequest, deps: QueueStatusDe
   const args = ['launch-manual', ...(url ? ['--url', url] : [])];
   // With pasted text, the command to copy reads it from the clipboard, so the text itself never appears in it.
   const shown = text !== undefined ? copyCommand(root, args, deps.home).replace(' && uv run ', ' && pbpaste | uv run ') : undefined;
-  return runInRepo(
+  const result = await runInRepo(
     { p, root },
     args,
     'launch-manual',
@@ -453,4 +453,9 @@ export async function launchManual(req: LaunchManualRequest, deps: QueueStatusDe
     text ?? '',
     shown,
   );
+  // "that link already has a packet: <id>": name the packet, if the queue lists it, so the page can jump to its card.
+  const dup = result.status === 500 && typeof result.body.error === 'string' ? /that link already has a packet: (\S+)/.exec(result.body.error)?.[1] : undefined;
+  const item = dup ? queueNow(p)?.items.find((i) => i.id === dup) : undefined;
+  if (item) result.body.duplicate = { id: item.id, company: item.company, title: item.title };
+  return result;
 }
