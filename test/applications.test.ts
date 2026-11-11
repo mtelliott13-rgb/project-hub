@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
-import { limitSummary, sha256Hex } from '../src/server/queue-rules.ts';
-import { approveDraft, changeQueueStatus, copyCommand, launchBuild, resumePdf } from '../src/server/queue-status.ts';
+import { httpsLinkProblem, limitSummary, manualJobInput, postingTextProblem, sha256Hex } from '../src/server/queue-rules.ts';
+import { approveDraft, changeQueueStatus, copyCommand, launchBuild, launchManual, resumePdf } from '../src/server/queue-status.ts';
 import { parseFeed } from '../src/server/job-feed.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
@@ -181,7 +181,8 @@ describe('fill sheet', () => {
  * a launch command's one line; dup: a launch-build refusal, exit 1;
  * pdf: resume_state.py pdf touches the packet's resume.pdf and prints Word's
  * line; pdf-stale: prints the line but leaves resume.pdf; pdf-fail: the export
- * fails, exit 1).
+ * fails, exit 1; manual: saves its stdin to `stdin` next to it, outside the
+ * repo, and prints launch-manual's line; manual-dup: a duplicate-link refusal).
  * Every call is also appended to `calls`, one line each.
  */
 const FAKE_UV = `#!/bin/sh
@@ -200,11 +201,13 @@ case $(cat "$d/mode") in
   dup) echo "error: $5 already has a packet: 2026-01-01-made-up" >&2; exit 1;;
   pdf) touch "jobs/packets/$5/resume.pdf"; echo "$5: Word saved resume.pdf from resume.docx (1 page)";;
   pdf-stale) echo "$5: Word saved resume.pdf from resume.docx (1 page)";;
+  manual) cat > "$d/stdin"; echo "opened Claude Code in Terminal running /build-packet \${6:-inbox/manual-20261110-120000-0a1b2c3d.txt}";;
+  manual-dup) cat > /dev/null; echo "error: that link already has a packet: 2026-11-03-acme-energy-data-analyst-intern" >&2; exit 1;;
   pdf-fail) echo "error: Word couldn't export the PDF: the resume is still open in Word" >&2; exit 1;;
 esac
 `;
 
-type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse' | 'launch' | 'dup' | 'pdf' | 'pdf-stale' | 'pdf-fail';
+type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse' | 'launch' | 'dup' | 'pdf' | 'pdf-stale' | 'pdf-fail' | 'manual' | 'manual-dup';
 function fakeUv(root: string, mode: FakeMode, after?: string) {
   const bin = path.join(root, 'fake-bin');
   fs.mkdirSync(bin, { recursive: true });
@@ -985,6 +988,169 @@ describe('Resume in Word: open-resume, the resume state and Rebuild PDF', () => 
     const { call } = pdfSetup('pdf');
     for (const url of ['/agent/v1/projects', '/agent/v1/projects/career']) {
       expect(JSON.stringify((await call('GET', url, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/resume|edited_pdf/i);
+    }
+  });
+});
+
+describe('Add a job: launch-manual with a link, pasted text, or both', () => {
+  // A made-up posting. MARKER must never show up in a log, an answer or a file the hub writes.
+  const MARKER = 'MADEUP-MARKER-7f3a';
+  const POSTING = `Made-Up Analytics Co — Junior Data Analyst (Denver, CO)\n\nYou'll build dashboards. Café hours, naïve résumé parsing 🙂.\nRef ${MARKER}\n`;
+  const LINK = 'https://jobs.example.com/made-up/123?src=hub#apply';
+
+  function manualSetup(mode: FakeMode = 'manual') {
+    const s = setup({ mode });
+    const launch = (job: object) => s.call('POST', '/api/launch', { kind: 'launch-manual', slug: 'career', ...job });
+    const stdin = () => fs.readFileSync(path.join(s.fake!.bin, 'stdin'), 'utf8');
+    return { ...s, launch, stdin };
+  }
+  /** Every file under the repo with its size and mtime, to show the hub wrote nothing there. */
+  const snapshot = (dir: string): string[] =>
+    fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => {
+      const f = path.join(e.parentPath, e.name);
+      const st = fs.statSync(f);
+      return `${f}:${st.size}:${st.mtimeMs}`;
+    }).sort();
+
+  it("checks links and text with Career HQ's rules", () => {
+    for (const ok of [LINK, 'HTTPS://Example.com', 'https://example.com:8443/x', 'https://例え.jp/求人']) expect(httpsLinkProblem(ok)).toBeNull();
+    const bad: [string, RegExp][] = [
+      ['http://example.com/job', /only https/i],
+      ['ftp://example.com/job', /only https/i],
+      ['javascript:alert(1)', /only https/i],
+      ['example.com/job', /only https/i],
+      ['https://user:pw@example.com/job', /user name/],
+      ['https://user@example.com/job', /user name/],
+      ['https:///job', /no host/],
+      ['https://:443/job', /no host/],
+      ['https://exa mple.com', /spaces or control/],
+      ['https://example.com/\u0007', /spaces or control/],
+      ['https://example.com/\u0085', /spaces or control/],
+      ['https://example.com/ ', /spaces or control/],
+      [`https://example.com/${'a'.repeat(2048)}`, /longer than 2048/],
+    ];
+    for (const [url, why] of bad) expect(httpsLinkProblem(url), url).toMatch(why);
+    expect(postingTextProblem(POSTING)).toBeNull();
+    expect(postingTextProblem(' \n\t ')).toMatch(/empty/);
+    expect(postingTextProblem('Job\0text')).toMatch(/NUL/);
+    expect(postingTextProblem('Job \ud800 text')).toMatch(/valid Unicode/);
+    // Bytes, not characters: 100,000 é's are 200,000 bytes; one more character is over.
+    expect(postingTextProblem('é'.repeat(100_000))).toBeNull();
+    expect(postingTextProblem('é'.repeat(100_000) + 'x')).toMatch(/200,001 bytes; the limit is 200,000/);
+  });
+
+  it('one box: a single word is a link, anything else is text plus the optional posting link', () => {
+    expect(manualJobInput('   ')).toEqual({ mode: 'empty', problem: null });
+    expect(manualJobInput(`  ${LINK}\n`, 'https://ignored.example.com')).toEqual({ mode: 'link', url: LINK, problem: null });
+    expect(manualJobInput('http://example.com/job').problem).toMatch(/only https/i);
+    expect(manualJobInput(POSTING)).toEqual({ mode: 'text', text: POSTING, url: undefined, problem: null });
+    expect(manualJobInput(POSTING, `  ${LINK} `)).toEqual({ mode: 'text', text: POSTING, url: LINK, problem: null });
+    expect(manualJobInput(POSTING, 'http://example.com').problem).toMatch(/only https/i);
+  });
+
+  it('dryRun shows the exact command; text only by its size, and a copy command that reads the clipboard', async () => {
+    const { launch, career, fake } = manualSetup();
+    const link = await launch({ url: LINK, dryRun: true });
+    expect(link.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'launch-manual', '--url', LINK], stdinBytes: 0 });
+    expect(link.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);
+    const both = await launch({ text: POSTING, url: LINK, dryRun: true });
+    expect(both.body.argv).toEqual([fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'launch-manual', '--url', LINK]);
+    expect(both.body.stdinBytes).toBe(Buffer.byteLength(POSTING));
+    expect(both.body.command).toBe(`cd ~/career && pbpaste | uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);
+    const text = await launch({ text: POSTING, dryRun: true });
+    expect(text.body.argv).toEqual([fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'launch-manual']);
+    expect(text.body.command).toBe('cd ~/career && pbpaste | uv run python scripts/review_queue.py launch-manual');
+    expect(JSON.stringify([link.body, both.body, text.body])).not.toContain(MARKER);
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it('a link alone gets an empty, closed stdin; text goes on stdin byte for byte; it is never logged, returned or written by the hub', async () => {
+    const { launch, career, root, fake, stdin } = manualSetup();
+    const before = snapshot(career);
+    const logs: string[] = [];
+    const spy = (...a: unknown[]) => void logs.push(a.map(String).join(' '));
+    const orig = { log: console.log, error: console.error, warn: console.warn };
+    Object.assign(console, { log: spy, error: spy, warn: spy });
+    try {
+      const link = await launch({ url: LINK });
+      expect(link.status).toBe(200);
+      expect(link.cache).toBe('no-store');
+      expect(link.body.message).toBe(`opened Claude Code in Terminal running /build-packet ${LINK}`);
+      expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'launch-manual', '--url', LINK]);
+      expect(stdin()).toBe('');
+      const both = await launch({ text: POSTING, url: LINK });
+      expect(both.status).toBe(200);
+      expect(stdin()).toBe(POSTING);
+      expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'launch-manual', '--url', LINK]);
+      const text = await launch({ text: POSTING, url: '   ' });
+      expect(text.status).toBe(200);
+      expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'launch-manual']);
+      expect(stdin()).toBe(POSTING);
+      expect(JSON.stringify([link.body, both.body, text.body])).not.toContain(MARKER);
+    } finally {
+      Object.assign(console, orig);
+    }
+    expect(logs.some((l) => l.includes('launch-manual'))).toBe(true);
+    expect(logs.join('\n')).not.toContain(MARKER);
+    expect(fake!.env()).not.toMatch(/X_HUB|ANTHROPIC|CLAUDE/);
+    // Nothing in Career HQ's repo changed, and the text is nowhere under the test folder except the fake's own record.
+    expect(snapshot(career)).toEqual(before);
+    const holding = fs.readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && fs.readFileSync(path.join(e.parentPath, e.name)).includes(MARKER))
+      .map((e) => path.join(e.parentPath, e.name));
+    expect(holding).toEqual([path.join(fake!.bin, 'stdin')]);
+  });
+
+  it('refuses before running: bad links, bad text, neither, too large, no token, wrong origin, unknown project', async () => {
+    const { launch, call, fake } = manualSetup();
+    const refused: [object, number, RegExp][] = [
+      [{ url: 'http://example.com/job' }, 400, /only https/i],
+      [{ url: 'javascript:alert(1)' }, 400, /only https/i],
+      [{ url: 'https://user:pw@example.com/' }, 400, /user name/],
+      [{ url: `https://example.com/${'a'.repeat(2100)}` }, 400, /longer than 2048/],
+      [{ url: 'https://example.com/a\nb' }, 400, /spaces or control/],
+      [{ text: POSTING, url: 'ftp://example.com' }, 400, /only https/i],
+      [{ text: '  \n ' }, 400, /Give a job link/],
+      [{}, 400, /Give a job link/],
+      [{ text: 'A job\0posting' }, 400, /NUL/],
+      [{ text: 'é'.repeat(100_001) }, 400, /200,002 bytes/],
+      [{ url: 42 }, 400, /bad launch-manual request/],
+    ];
+    for (const [job, status, why] of refused) {
+      const res = await launch(job);
+      expect(res.status, JSON.stringify(job).slice(0, 80)).toBe(status);
+      expect(res.body.error).toMatch(why);
+    }
+    // Over the request size limit: refused before the body is read.
+    const huge = await launch({ text: 'x'.repeat(1_100_000) });
+    expect(huge.status).toBe(413);
+    expect((await call('POST', '/api/launch', { kind: 'launch-manual', slug: 'career', url: LINK }, { Origin: HUB, 'Content-Type': 'application/json' })).status).toBe(403);
+    expect((await call('POST', '/api/launch', { kind: 'launch-manual', slug: 'career', url: LINK }, { Origin: 'https://evil.example.com', 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' })).status).toBe(403);
+    expect((await call('POST', '/api/launch', { kind: 'launch-manual', slug: 'nope', url: LINK })).status).toBe(404);
+    expect((await call('POST', '/api/launch', { kind: 'launch-manual', slug: 'other', url: LINK })).body.error).toMatch(/no review queue/);
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it("shares the one-per-project lock, and a failure shows Career HQ's error line and the command to copy", async () => {
+    const s = manualSetup('manual-dup');
+    const p = { slug: 'career', repos: [s.career], folders: [] } as never;
+    const busy = await launchManual({ kind: 'launch-manual', slug: 'career', url: LINK }, { project: () => p, uvPath: s.fake!.uv, home: s.root, running: new Set(['career']) });
+    expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
+    expect(s.fake!.ran()).toBe(false);
+    const dup = await s.launch({ url: LINK });
+    expect(dup.status).toBe(500);
+    expect(dup.body.error).toBe('error: that link already has a packet: 2026-11-03-acme-energy-data-analyst-intern (exit 1)');
+    expect(dup.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);
+    const withText = await s.launch({ text: POSTING, url: LINK });
+    expect(withText.body.command).toBe(`cd ~/career && pbpaste | uv run python scripts/review_queue.py launch-manual --url '${LINK}'`);
+    expect(JSON.stringify(withText.body)).not.toContain(MARKER);
+  });
+
+  it('none of it reaches the MCP tools', async () => {
+    const { call, launch } = manualSetup();
+    await launch({ text: POSTING });
+    for (const url of ['/agent/v1/projects', '/agent/v1/projects/career']) {
+      expect(JSON.stringify((await call('GET', url, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(new RegExp(`${MARKER}|launch-manual|Made-Up`));
     }
   });
 });

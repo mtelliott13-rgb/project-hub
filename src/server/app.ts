@@ -4,6 +4,7 @@ import path from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { desc, eq, isNotNull } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { streamSSE } from 'hono/streaming';
 import { listAllProjects, type Db } from './db/index.ts';
 import { chats, links, projects, sessions } from './db/schema.ts';
@@ -40,6 +41,8 @@ import {
   launchApplySchema,
   launchBuild,
   launchBuildSchema,
+  launchManual,
+  launchManualSchema,
   openLetter,
   openLetterSchema,
   openResume,
@@ -97,6 +100,9 @@ type AppDeps = DocDeps & {
  * forces a CORS preflight the hub never answers. (Same-origin GETs carry no
  * Origin, so for those the token and Sec-Fetch-Site do the work.)
  */
+/** Largest /api/launch body: room for 200,000 bytes of posting text even if JSON escaping doubles it. */
+export const LAUNCH_BODY_MAX = 1_000_000;
+
 export function hubPageRefusal(c: Context, origins: string[], uiToken: string): string | null {
   const method = c.req.method;
   const origin = c.req.header('Origin');
@@ -123,7 +129,7 @@ export function createApp(deps: AppDeps) {
   const projectRow = (slug: string) => db.select().from(projects).where(eq(projects.slug, slug)).get();
   // When Start was last clicked per project, to show "starting" until the port opens.
   const startClicked = new Map<string, number>();
-  // Projects with a Career HQ command (status, approve-draft, open-letter, open-resume, resume-pdf, launch-apply, launch-build) running now.
+  // Projects with a Career HQ command (status, approve-draft, open-letter, open-resume, resume-pdf, launch-apply, launch-build, launch-manual) running now.
   const queueRuns = new Set<string>();
   const app = new Hono();
 
@@ -134,6 +140,10 @@ export function createApp(deps: AppDeps) {
     if (!hosts.has(c.req.header('Host') ?? new URL(c.req.url).host)) return c.text('Wrong host', 421);
     await next();
   });
+
+  // Launch requests are small, except "Add a job" pasted text (200,000 bytes at
+  // most, before JSON escaping). Anything bigger is refused before it's read.
+  app.use('/api/launch', bodyLimit({ maxSize: LAUNCH_BODY_MAX, onError: (c) => c.json({ error: 'That request is too large; posting text can be at most 200,000 bytes' }, 413) }));
 
   // Every API call must come from the hub page with its token, except the
   // health check and the event stream (EventSource can't send headers, and
@@ -290,6 +300,8 @@ export function createApp(deps: AppDeps) {
             return one(openResumeSchema, openResume);
           case 'resume-pdf':
             return one(resumePdfSchema, resumePdf);
+          case 'launch-manual':
+            return one(launchManualSchema, launchManual);
           case 'launch-apply':
             return one(launchApplySchema, launchApply);
           default:

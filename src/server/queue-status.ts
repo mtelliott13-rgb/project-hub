@@ -6,6 +6,7 @@
 //   uv run python scripts/resume_state.py pdf <id>               (Word saves resume.pdf from your edited resume.docx)
 //   uv run python scripts/review_queue.py launch-apply <id>      (Terminal: claude --chrome "/apply <id>")
 //   uv run python scripts/review_queue.py launch-build <posting> (Terminal: claude --chrome "/build-packet <posting>")
+//   uv run python scripts/review_queue.py launch-manual [--url <link>]  (posting text on stdin; Terminal: /build-packet …)
 // The launch commands return in seconds: Career HQ itself opens a new Terminal
 // window for the long, browser-driving session, which you can watch and stop.
 // Career HQ owns the queue, meta.yaml, answers.yaml and the fill sheets, so the
@@ -22,7 +23,7 @@ import { fillSheetFor, findQueueFiles, QueueError, queueRoot, readQueue, withLim
 import { FeedError, feedRoot, findFeedFiles, POSTING_ID, readFeed } from './job-feed.ts';
 import type { Project } from './db/schema.ts';
 import { shellQuote } from './launcher.ts';
-import { APP_STATUSES } from './queue-rules.ts';
+import { APP_STATUSES, httpsLinkProblem, postingTextProblem, utf8Bytes } from './queue-rules.ts';
 
 export const QUEUE_SCRIPT = 'scripts/review_queue.py';
 export const RESUME_SCRIPT = 'scripts/resume_state.py';
@@ -74,6 +75,19 @@ export const launchBuildSchema = z.object({
 export const openResumeSchema = z.object({ kind: z.literal('open-resume'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
 /** "Rebuild PDF": only while the queue shows the resume as edited_pdf_outdated. */
 export const resumePdfSchema = z.object({ kind: z.literal('resume-pdf'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
+/**
+ * "Add a job": a link, pasted posting text, or both (the link then only for
+ * Career HQ's duplicate check). Checked with Career HQ's own rules below; the
+ * text goes to the command on stdin and nowhere else.
+ */
+export const launchManualSchema = z.object({
+  kind: z.literal('launch-manual'),
+  slug: z.string().min(1),
+  url: z.string().max(10_000).optional(),
+  text: z.string().optional(),
+  dryRun: z.boolean().optional(),
+});
+export type LaunchManualRequest = z.infer<typeof launchManualSchema>;
 export type OpenLetterRequest = z.infer<typeof openLetterSchema>;
 export type OpenResumeRequest = z.infer<typeof openResumeSchema>;
 export type ResumePdfRequest = z.infer<typeof resumePdfSchema>;
@@ -81,7 +95,7 @@ export type LaunchApplyRequest = z.infer<typeof launchApplySchema>;
 export type LaunchBuildRequest = z.infer<typeof launchBuildSchema>;
 
 /** Every Career HQ command the page can run, by launch kind. */
-export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'open-resume', 'resume-pdf', 'launch-apply', 'launch-build'] as const;
+export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'open-resume', 'resume-pdf', 'launch-apply', 'launch-build', 'launch-manual'] as const;
 
 export type QueueStatusDeps = {
   project: (slug: string) => Project | undefined;
@@ -119,7 +133,8 @@ const lastLines = (text: string) => text.trimEnd().split('\n').slice(-OUTPUT_LIN
 
 type Run = { ok: true; output: string; stdout: string } | { ok: false; error: string; output: string };
 
-function runCommand(argv: string[], cwd: string, timeoutMs: number, what: string): Promise<Run> {
+/** `stdin`, when given, is written to the command and then closed ('' gives it an empty, closed stdin). */
+function runCommand(argv: string[], cwd: string, timeoutMs: number, what: string, stdin?: string): Promise<Run> {
   const env = {
     PATH: [path.dirname(argv[0]), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
     HOME: process.env.HOME ?? '',
@@ -127,7 +142,7 @@ function runCommand(argv: string[], cwd: string, timeoutMs: number, what: string
     NO_COLOR: '1',
   };
   return new Promise((resolve) => {
-    execFile(argv[0], argv.slice(1), { cwd, env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, killSignal: 'SIGTERM' }, (err, stdout, stderr) => {
+    const child = execFile(argv[0], argv.slice(1), { cwd, env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, killSignal: 'SIGTERM' }, (err, stdout, stderr) => {
       const output = lastLines([stderr, stdout].map((s) => s.trimEnd()).filter(Boolean).join('\n'));
       if (!err) return resolve({ ok: true, output, stdout });
       const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null; code?: number | string };
@@ -148,6 +163,11 @@ function runCommand(argv: string[], cwd: string, timeoutMs: number, what: string
                 : `Career HQ's ${what} command failed: ${e.message}`;
       resolve({ ok: false, error, output });
     });
+    if (stdin !== undefined && child.stdin) {
+      // A command that exits before reading everything closes the pipe; its exit code says what happened.
+      child.stdin.on('error', () => {});
+      child.stdin.end(stdin, 'utf8');
+    }
   });
 }
 
@@ -190,14 +210,18 @@ async function runInRepo(
   check: (run: { output: string; stdout: string }, command: string) => QueueStatusResult,
   timeoutMs = TIMEOUT_MS,
   script = QUEUE_SCRIPT,
+  /** Written to the command's stdin, then closed. Never logged or returned; a dry run reports only its size. */
+  stdin?: string,
+  /** The command to copy, when the plain one would leave out what goes on stdin. */
+  shownCommand?: string,
 ): Promise<QueueStatusResult> {
   const { p, root } = f;
-  const command = copyCommand(root, args, deps.home, script);
+  const command = shownCommand ?? copyCommand(root, args, deps.home, script);
   if (!realFileInside(root, script)) {
     return { status: 409, body: { error: `No ${script} inside ${tilde(root, deps.home)}`, command } };
   }
   const argv = [deps.uvPath, 'run', 'python', script, ...args];
-  if (dryRun) return { status: 200, body: { ok: true, dryRun: true, command, cwd: root, argv } };
+  if (dryRun) return { status: 200, body: { ok: true, dryRun: true, command, cwd: root, argv, ...(stdin !== undefined && { stdinBytes: utf8Bytes(stdin) }) } };
   try {
     if (!fs.statSync(deps.uvPath).isFile()) throw new Error();
     fs.accessSync(deps.uvPath, fs.constants.X_OK);
@@ -209,7 +233,7 @@ async function runInRepo(
   deps.running.add(p.slug);
   try {
     console.log(`${new Date().toISOString()} Applications: ${p.slug}: cd ${root} && ${argv.map(shellQuote).join(' ')}`);
-    const run = await runCommand(argv, root, deps.timeoutMs ?? timeoutMs, what);
+    const run = await runCommand(argv, root, deps.timeoutMs ?? timeoutMs, what, stdin);
     if (!run.ok) return { status: 500, body: { error: run.error, output: run.output, command } };
     return check(run, command);
   } finally {
@@ -387,5 +411,46 @@ export async function launchBuild(req: LaunchBuildRequest, deps: QueueStatusDeps
     deps,
     (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
     LAUNCH_TIMEOUT_MS,
+  );
+}
+
+/**
+ * "Add a job": Career HQ checks the link isn't already a packet, saves any
+ * pasted text in its own jobs/inbox/, and opens a new Terminal window running
+ * `claude --chrome "/build-packet …"`. The hub passes the link as `--url` and
+ * the text on stdin (an empty, closed stdin when there's none), and never
+ * logs, stores or returns the text.
+ */
+export async function launchManual(req: LaunchManualRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const p = deps.project(req.slug);
+  if (!p) return { status: 404, body: { error: `Unknown project ${req.slug}` } };
+  const url = req.url?.trim() || undefined;
+  // Whitespace-only text counts as no text, as for Career HQ.
+  const text = req.text?.trim() ? req.text : undefined;
+  if (!url && !text) return { status: 400, body: { error: 'Give a job link (https://…), the posting text, or both' } };
+  const problem = (text !== undefined ? postingTextProblem(text) : null) ?? (url ? httpsLinkProblem(url) : null);
+  if (problem) return { status: 400, body: { error: problem } };
+  const [file] = findQueueFiles(p);
+  if (!file) return { status: 404, body: { error: 'This project has no review queue' } };
+  let root: string;
+  try {
+    root = fs.realpathSync(queueRoot(file));
+  } catch {
+    return { status: 409, body: { error: `The folder holding ${path.basename(file)} is gone` } };
+  }
+  const args = ['launch-manual', ...(url ? ['--url', url] : [])];
+  // With pasted text, the command to copy reads it from the clipboard, so the text itself never appears in it.
+  const shown = text !== undefined ? copyCommand(root, args, deps.home).replace(' && uv run ', ' && pbpaste | uv run ') : undefined;
+  return runInRepo(
+    { p, root },
+    args,
+    'launch-manual',
+    req.dryRun,
+    deps,
+    (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
+    LAUNCH_TIMEOUT_MS,
+    QUEUE_SCRIPT,
+    text ?? '',
+    shown,
   );
 }

@@ -48,3 +48,58 @@ export async function sha256Hex(text: string): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// "Add a job": Career HQ's `review_queue.py launch-manual [--url <link>]`, posting
+// text on stdin (SPEC.md "Manual job input"). These mirror Career HQ's own
+// checks (manual_posting.py check_url / check_text) so the page can say what's
+// wrong before anything runs; Career HQ checks again itself.
+export const MANUAL_MAX_URL = 2048;
+export const MANUAL_MAX_TEXT_BYTES = 200_000;
+
+/** Why a link isn't one Career HQ accepts (https only, a host, no user name, no spaces or control characters), or null. */
+export function httpsLinkProblem(url: string): string | null {
+  if (!url) return 'No link given';
+  if ([...url].length > MANUAL_MAX_URL) return `The link is longer than ${MANUAL_MAX_URL} characters`;
+  // Python's isspace() also counts U+0085 and U+001C–U+001F; those are covered here too.
+  if (/[\s\x00-\x1f\x7f\x85]/u.test(url)) return 'The link has spaces or control characters in it';
+  if (!/^https:\/\//i.test(url)) return 'Only https:// links are accepted';
+  // The host part: at least one character, no user name or password (no @), not just a port.
+  const m = /^https:\/\/([^/?#]*)/i.exec(url);
+  if (!m || !m[1] || m[1].includes('@') || m[1].startsWith(':')) return 'The link has no host (or has a user name in it)';
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || !u.hostname || u.username || u.password) return 'The link has no host (or has a user name in it)';
+  } catch {
+    return "The link doesn't parse";
+  }
+  return null;
+}
+
+/** UTF-8 size of the text, as Career HQ counts it. */
+export const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+
+/** Why pasted posting text isn't acceptable (blank, NUL, broken Unicode, over 200,000 bytes), or null. */
+export function postingTextProblem(text: string): string | null {
+  if (!text.trim()) return 'The posting text is empty';
+  if (text.includes('\0')) return 'The posting text has NUL characters in it';
+  if (/\p{Cs}/u.test(text)) return "The posting text isn't valid Unicode";
+  const bytes = utf8Bytes(text);
+  if (bytes > MANUAL_MAX_TEXT_BYTES) return `The posting text is ${bytes.toLocaleString('en-US')} bytes; the limit is ${MANUAL_MAX_TEXT_BYTES.toLocaleString('en-US')}`;
+  return null;
+}
+
+export type ManualJob = { mode: 'empty' | 'link' | 'text'; url?: string; text?: string; problem: string | null };
+
+/**
+ * What the "Add a job" box holds. One word with no spaces is a link (a posting
+ * is never one word), so a bad link is refused rather than sent as text.
+ * Anything else is posting text, sent as written, plus the optional "Posting
+ * link" (for the duplicate check) when it's filled in.
+ */
+export function manualJobInput(box: string, link = ''): ManualJob {
+  const trimmed = box.trim();
+  if (!trimmed) return { mode: 'empty', problem: null };
+  if (!/\s/u.test(trimmed)) return { mode: 'link', url: trimmed, problem: httpsLinkProblem(trimmed) };
+  const url = link.trim() || undefined;
+  return { mode: 'text', text: box, url, problem: postingTextProblem(box) ?? (url ? httpsLinkProblem(url) : null) };
+}

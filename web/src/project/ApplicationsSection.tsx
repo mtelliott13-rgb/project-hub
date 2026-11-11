@@ -10,12 +10,14 @@
 // Rebuild PDF (a resume edited after its PDF) and Fill application (reviewed
 // packets only) run Career HQ's open-letter, open-resume, resume_state.py pdf
 // and launch-apply; launch-apply opens a Terminal window running Claude Code's
-// /apply, which stops before submit. Everything is read from local disk by the hub.
+// /apply, which stops before submit. "Add a job" takes a link or pasted posting
+// text (plus an optional link) and runs Career HQ's launch-manual, which opens
+// Claude Code's /build-packet in Terminal. Everything is read from local disk by the hub.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { createContext, useContext, useState, type MouseEvent } from 'react';
-import { APP_STATUSES, limitFlags, limitSummary, queueSummary, sha256Hex, sortApplications, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { approveShorterDraft, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
+import { APP_STATUSES, limitFlags, limitSummary, manualJobInput, MANUAL_MAX_TEXT_BYTES, queueSummary, sha256Hex, sortApplications, utf8Bytes, type AppStatus } from '../../../src/server/queue-rules.ts';
+import { approveShorterDraft, launchManualJob, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch, WHAT } from './career-launch.ts';
 import type { SectionProps } from './sections.tsx';
@@ -256,6 +258,7 @@ export function ApplicationsSection({ project, run }: SectionProps) {
         </p>
       )}
       {notice && <Notice notice={notice} />}
+      <AddJob slug={slug} busy={busy} setNotice={setNotice} />
       {q.problems.map((p) => (
         <p key={p} className="text-xs text-amber-700">
           {p}
@@ -304,6 +307,95 @@ function LetterNotSynced({ app, repo }: { app: Application; repo: string }) {
         <CopyButton value={command} label="the sync command" />
       </div>
     </div>
+  );
+}
+
+/**
+ * "Add a job": one box for a job link or the pasted posting; with pasted text,
+ * an optional "Posting link" so Career HQ can still check for a duplicate. The
+ * text stays in this component's memory only (never saved in the browser) and
+ * is cleared once Career HQ has taken it.
+ */
+function AddJob({ slug, busy, setNotice }: { slug: string; busy: boolean; setNotice: (n: NoticeValue | null) => void }) {
+  const queryClient = useQueryClient();
+  const [box, setBox] = useState('');
+  const [link, setLink] = useState('');
+  const job = manualJobInput(box, link);
+  const build = useMutation({
+    mutationKey: careerKey(slug),
+    mutationFn: () => launchManualJob(slug, { url: job.url, text: job.text }),
+    onMutate: () => setNotice(null),
+    onSuccess: (r) => {
+      setBox('');
+      setLink('');
+      setNotice({ ok: true, text: `${r.message}. Watch it in that Terminal window; press Ctrl+C or close the window to stop it.` });
+    },
+    onError: (e: Error) => {
+      const body = e instanceof HubError ? e.body : {};
+      setNotice({
+        ok: false,
+        text: `Add a job: ${e.message}`,
+        output: typeof body.output === 'string' && body.output ? body.output : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+      });
+    },
+    onSettled: () => {
+      for (const key of ['applications', 'projects']) void queryClient.invalidateQueries({ queryKey: [key] });
+    },
+  });
+  const bytes = job.mode === 'text' ? utf8Bytes(box) : 0;
+  return (
+    <form
+      className="space-y-1.5 rounded-lg border border-dashed border-stone-300 p-3 dark:border-stone-700"
+      data-testid="add-job"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (job.mode !== 'empty' && !job.problem && !busy) build.mutate();
+      }}
+    >
+      <label htmlFor={`add-job-${slug}`} className="text-sm font-medium">
+        Add a job
+      </label>
+      <textarea
+        id={`add-job-${slug}`}
+        value={box}
+        onChange={(e) => setBox(e.target.value)}
+        rows={job.mode === 'text' ? 6 : 2}
+        placeholder="Paste a job link (https://…) or the whole posting text"
+        className="block w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-stone-700 dark:bg-stone-950"
+        spellCheck={false}
+      />
+      {job.mode === 'link' && !job.problem && <p className="text-xs text-stone-500">Link · Career HQ checks it isn't already a packet, then opens it in Chrome to read the posting.</p>}
+      {job.mode === 'text' && (
+        <>
+          <p className={`text-xs ${bytes > MANUAL_MAX_TEXT_BYTES ? 'text-red-600 dark:text-red-400' : 'text-stone-500'}`}>
+            Pasted posting · {bytes.toLocaleString()} / {MANUAL_MAX_TEXT_BYTES.toLocaleString()} bytes
+          </p>
+          <label className="block text-xs text-stone-600 dark:text-stone-400">
+            Posting link (optional)
+            <input
+              type="url"
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://…"
+              className="mt-0.5 block w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-xs dark:border-stone-700 dark:bg-stone-950"
+            />
+            <span className="text-stone-500">Lets Career HQ check for an existing packet. The page isn't opened; your pasted text is the posting.</span>
+          </label>
+        </>
+      )}
+      {job.problem && (
+        <p className="text-xs text-red-600 dark:text-red-400" role="alert">
+          {job.problem}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Action small primary type="submit" disabled={busy || job.mode === 'empty' || !!job.problem} title="Runs Career HQ's launch-manual: a new Terminal window running Claude Code's /build-packet for this job">
+          {build.isPending ? 'Opening Terminal…' : 'Build packet'}
+        </Action>
+        <span className="text-xs text-stone-500">Opens Claude Code in Terminal. It uses your Claude plan's usage, like the feed's Build packet, and stops at draft for your review.</span>
+      </div>
+    </form>
   );
 }
 

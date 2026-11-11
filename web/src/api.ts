@@ -210,6 +210,13 @@ export type CareerLaunchKind = 'open-letter' | 'open-resume' | 'resume-pdf' | 'l
 export const runCareerLaunch = (kind: CareerLaunchKind, slug: string, id: string) =>
   hub<{ command: string; message: string }>('/api/launch', { method: 'POST', body: { kind, slug, id } });
 
+/**
+ * "Add a job": Career HQ's launch-manual with a link, pasted posting text, or
+ * both. The text goes only to the hub, which hands it to Career HQ on stdin.
+ */
+export const launchManualJob = (slug: string, job: { url?: string; text?: string }) =>
+  hub<{ command: string; message: string }>('/api/launch', { method: 'POST', body: { kind: 'launch-manual', slug, ...job } });
+
 // Career HQ's job feed (read only).
 export type { Feed, Posting };
 export type ShownFeed = Feed & { others: string[] };
