@@ -7,7 +7,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
 import { httpsLinkProblem, limitSummary, manualJobInput, postingTextProblem, sha256Hex } from '../src/server/queue-rules.ts';
-import { approveDraft, changeQueueStatus, copyCommand, launchBuild, launchManual, resumePdf } from '../src/server/queue-status.ts';
+import { approveDraft, changeQueueStatus, copyCommand, hubPdfChecker, launchBuild, launchManual, resumePdf } from '../src/server/queue-status.ts';
 import { parseFeed } from '../src/server/job-feed.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
@@ -179,16 +179,22 @@ describe('fill sheet', () => {
  * approve: puts after.json in place at the path in `target` and prints Career
  * HQ's one line; refuse: prints an "error:" line and exits 2; launch: prints
  * a launch command's one line; dup: a launch-build refusal, exit 1;
- * pdf: resume_state.py pdf touches the packet's resume.pdf and prints Word's
- * line; pdf-stale: prints the line but leaves resume.pdf; pdf-fail: the export
- * fails, exit 1; manual: saves its stdin to `stdin` next to it, outside the
+ * pdf: resume_state.py pdf puts files-after.json in place as the PDF check's
+ * answer and prints Word's line; pdf-stale: prints the line only; pdf-fail:
+ * the export fails, exit 1; manual: saves its stdin to `stdin` next to it, outside the
  * repo, and prints launch-manual's line; manual-dup: a duplicate-link refusal).
  * Every call is also appended to `calls`, one line each.
  */
 const FAKE_UV = `#!/bin/sh
 d=$(dirname "$0")
-printf '%s\\n' "$PWD" "$@" > "$d/args"
 echo "$*" >> "$d/calls"
+# Career HQ's PDF check: prints files.json (made up by the test), exits with files-exit if set, sleeps files-sleep first.
+if [ "$3" = scripts/fill_plan.py ]; then
+  [ -f "$d/files-sleep" ] && sleep "$(cat "$d/files-sleep")"
+  cat "$d/files.json" 2>/dev/null
+  exit "$(cat "$d/files-exit" 2>/dev/null || echo 0)"
+fi
+printf '%s\\n' "$PWD" "$@" > "$d/args"
 env > "$d/env"
 case $(cat "$d/mode") in
   ok) cp "$d/after.yaml" jobs/queue.yaml; echo "changed";;
@@ -199,7 +205,7 @@ case $(cat "$d/mode") in
   refuse) echo "checking" ; echo "error: the draft for question $6 has changed since it was shown; reload and try again" >&2; exit 2;;
   launch) echo "$5: opened Claude Code in Terminal running /x $5";;
   dup) echo "error: $5 already has a packet: 2026-01-01-made-up" >&2; exit 1;;
-  pdf) touch "jobs/packets/$5/resume.pdf"; echo "$5: Word saved resume.pdf from resume.docx (1 page)";;
+  pdf) [ -f "$d/files-after.json" ] && cp "$d/files-after.json" "$d/files.json"; echo "$5: Word saved resume.pdf from resume.docx (1 page)";;
   pdf-stale) echo "$5: Word saved resume.pdf from resume.docx (1 page)";;
   manual) cat > "$d/stdin"; echo "opened Claude Code in Terminal running /build-packet \${6:-inbox/manual-20261110-120000-0a1b2c3d.txt}";;
   manual-dup) cat > /dev/null; echo "error: that link already has a packet: 2026-11-03-acme-energy-data-analyst-intern" >&2; exit 1;;
@@ -855,8 +861,8 @@ describe("Career HQ's launch buttons", () => {
     // Globex has no cover_letter.docx.
     expect((await launch('open-letter', '2026-10-28-globex-ops-analyst')).body.error).toMatch(/no cover_letter.docx/);
     expect((await launch('open-resume', '2026-10-28-globex-ops-analyst')).body.error).toMatch(/no resume.docx/);
-    // Rebuild PDF only for a resume the queue calls edited (Acme's has no state here).
-    expect((await launch('resume-pdf', ACME)).body.error).toMatch(/"not set", not edited/);
+    // Rebuild PDF asks Career HQ's check first; with no scripts/fill_plan.py here, nothing is rebuilt.
+    expect((await launch('resume-pdf', ACME)).body.error).toMatch(/PDF check failed, so nothing was rebuilt: No scripts\/fill_plan.py/);
     // Acme already has a packet for this posting.
     expect((await launch('launch-build', 'greenhouse:acme:123')).body).toEqual({ error: `greenhouse:acme:123 already has a packet: ${ACME}` });
     const noToken = await call('POST', '/api/launch', { kind: 'launch-build', slug: 'career', id: 'ashby:example-co:0a1b-2c3d' }, { Origin: HUB, 'Content-Type': 'application/json' });
@@ -881,21 +887,33 @@ describe("Career HQ's launch buttons", () => {
   });
 });
 
-describe('Resume in Word: open-resume, the resume state and Rebuild PDF', () => {
+describe("Resume in Word, and both PDFs by Career HQ's fingerprint check", () => {
   const ACME = '2026-11-03-acme-energy-data-analyst-intern';
   const withResume = (state: string) => QUEUE.replace('    notes: ""\n', `    resume: "${state}"\n    notes: ""\n`);
-  const HOUR_AGO = new Date(Date.now() - 3_600_000);
-  /** Acme's resume.docx saved now, its resume.pdf an hour ago (or `pdf: 'newer'`/`'none'`), and the queue's resume field. */
-  function pdfSetup(mode: FakeMode, state = 'edited_pdf_outdated', pdf: 'older' | 'newer' | 'none' = 'older') {
+  /** Career HQ's `fill_plan.py files` answer for Acme: which PDFs it lists as current, and its notes. */
+  const filesJson = (s: { acme: string }, listed: ('resume' | 'cover_letter')[], notes: string[] = []) =>
+    JSON.stringify({
+      id: ACME,
+      files: Object.fromEntries(listed.map((k) => [k, path.join(s.acme, k === 'resume' ? 'resume.pdf' : 'cover_letter.pdf')])),
+      notes,
+    });
+  const RESUME_NOTE = `resume.pdf wasn't made from resume.docx as it is now (Word edits since the PDF was made), so it is left out. Close the resume in Word, then Rebuild PDF: uv run python scripts/resume_state.py pdf ${ACME}`;
+  const LETTER_NOTE = `cover_letter.pdf wasn't made from cover_letter.docx as it is now (edits that aren't synced), so it is left out. Sync first: uv run python scripts/letter_sync.py sync ${ACME}`;
+
+  /** Acme with resume.docx and cover_letter.docx (and the PDFs repo() writes), the queue's resume field, and the check's answer. */
+  function pdfSetup(mode: FakeMode, opts: { state?: string; files?: string } = {}) {
     const s = setup({ mode });
-    fs.writeFileSync(s.file, withResume(state));
+    fs.mkdirSync(path.join(s.career, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(s.career, 'scripts/fill_plan.py'), '# stand-in; the fake uv never runs it\n');
+    fs.writeFileSync(s.file, withResume(opts.state ?? 'edited'));
     fs.writeFileSync(path.join(s.acme, 'resume.docx'), 'PK fake docx');
-    const pdfPath = path.join(s.acme, 'resume.pdf');
-    if (pdf === 'none') fs.rmSync(pdfPath);
-    else if (pdf === 'older') fs.utimesSync(pdfPath, HOUR_AGO, HOUR_AGO);
-    else fs.utimesSync(path.join(s.acme, 'resume.docx'), HOUR_AGO, HOUR_AGO);
+    fs.writeFileSync(path.join(s.acme, 'cover_letter.docx'), 'PK fake docx');
+    const bin = s.fake!.bin;
+    fs.writeFileSync(path.join(bin, 'files.json'), opts.files ?? filesJson(s, ['cover_letter'], [RESUME_NOTE]));
     const launch = (kind: string, id: unknown, extra: object = {}) => s.call('POST', '/api/launch', { kind, slug: 'career', id, ...extra });
-    return { ...s, launch };
+    const check = (id = ACME) => s.call('GET', `/api/projects/career/applications/${id}/pdf-check`);
+    const checks = () => s.fake!.calls().filter((c) => c.includes('fill_plan.py files')).length;
+    return { ...s, launch, check, checks, bin };
   }
 
   it('reads the resume state and resume.docx, flagging values it does not know', () => {
@@ -908,62 +926,134 @@ describe('Resume in Word: open-resume, the resume state and Rebuild PDF', () => 
     expect(parseQueue(base, '/r/jobs/queue.yaml').items[0].resume).toBeNull();
     expect(parseQueue(`${base}    resume: "synced"\n`, '/r/jobs/queue.yaml').items[0].problems).toContain('unknown resume state "synced"');
     const { file } = pdfSetup('pdf');
-    expect(readQueue(file).items[0]).toMatchObject({ resume: 'edited_pdf_outdated', resumePdfOutdated: true, files: { resumeDocx: true } });
+    expect(readQueue(file).items[0]).toMatchObject({ resume: 'edited', files: { resumeDocx: true, coverLetterDocx: true } });
   });
 
-  it('"PDF out of date" comes from the files\' modification times; the queue only says edited or not', () => {
-    const outdated = (state: string, pdf: 'older' | 'newer' | 'none') => readQueue(pdfSetup('pdf', state, pdf).file).items[0].resumePdfOutdated;
-    // Saved in Word after the PDF, though the queue hasn't been rebuilt since.
-    expect(outdated('edited', 'older')).toBe(true);
-    expect(outdated('edited', 'none')).toBe(true);
-    // The PDF was saved by hand after the edits, though the queue still says outdated.
-    expect(outdated('edited_pdf_outdated', 'newer')).toBe(false);
-    expect(outdated('edited', 'newer')).toBe(false);
-    // Not edited per the queue: never flagged.
-    expect(outdated('generated', 'older')).toBe(false);
-    // No resume.docx: nothing to compare.
-    const s = pdfSetup('pdf', 'edited', 'older');
-    fs.rmSync(path.join(s.acme, 'resume.docx'));
-    expect(readQueue(s.file).items[0].resumePdfOutdated).toBe(false);
+  it("runs Career HQ's check with separate arguments and reports each PDF: outdated with its note, current, or not built", async () => {
+    const s = pdfSetup('pdf');
+    const res = await s.check();
+    expect(res.status).toBe(200);
+    expect(res.cache).toBe('no-store');
+    expect(res.body).toMatchObject({ resume: { state: 'outdated', note: RESUME_NOTE }, letter: { state: 'current', note: null } });
+    expect(s.fake!.calls()).toEqual([`run python scripts/fill_plan.py files ${ACME}`]);
+    // Both listed: current. The letter not listed: outdated with Career HQ's note.
+    fs.writeFileSync(path.join(s.bin, 'files.json'), filesJson(s, ['resume'], [LETTER_NOTE]));
+    fs.writeFileSync(path.join(s.acme, 'cover_letter.docx'), 'PK edited');
+    expect((await s.check()).body).toMatchObject({ resume: { state: 'current' }, letter: { state: 'outdated', note: LETTER_NOTE } });
+    // No PDF at all: "no-pdf". No .docx: nothing to be out of date with.
+    fs.rmSync(path.join(s.acme, 'resume.pdf'));
+    fs.rmSync(path.join(s.acme, 'cover_letter.docx'));
+    expect((await s.check()).body).toMatchObject({ resume: { state: 'no-pdf', note: null }, letter: null });
+    // A packet the queue doesn't list, an odd id, an unknown project, no token.
+    expect((await s.check('2026-01-01-not-listed')).status).toBe(404);
+    expect((await s.check('..%2F..%2Fetc')).status).toBe(400);
+    expect((await s.call('GET', `/api/projects/nope/applications/${ACME}/pdf-check`)).status).toBe(404);
+    expect((await s.call('GET', `/api/projects/career/applications/${ACME}/pdf-check`, undefined, {})).status).toBe(403);
   });
 
-  it("Rebuild PDF: dryRun shows the exact command; a run exports and checks the PDF's time, with separate arguments and no shell", async () => {
-    const { launch, career, fake } = pdfSetup('pdf');
-    const dry = await launch('resume-pdf', ACME, { dryRun: true });
-    expect(dry.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/resume_state.py', 'pdf', ACME] });
+  it('never judges by file dates: a touched .docx with the same answer stays current; a newer PDF Career HQ does not list stays outdated', async () => {
+    const s = pdfSetup('pdf', { files: filesJson({ acme: '' } as never, []) });
+    // Career HQ lists both as current.
+    fs.writeFileSync(path.join(s.bin, 'files.json'), filesJson(s, ['resume', 'cover_letter']));
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(path.join(s.acme, 'resume.pdf'), hourAgo, hourAgo); // PDF older than the .docx
+    expect((await s.check()).body.resume.state).toBe('current');
+    // A PDF saved by hand (newer than the .docx) that Career HQ doesn't trust.
+    fs.writeFileSync(path.join(s.acme, 'resume.pdf'), '%PDF hand-saved');
+    fs.writeFileSync(path.join(s.bin, 'files.json'), filesJson(s, ['cover_letter'], [RESUME_NOTE]));
+    expect((await s.check()).body.resume.state).toBe('outdated');
+  });
+
+  it('caches by the packet files: no second run while nothing changed; a changed file asks again; a fresh check always runs', async () => {
+    const s = pdfSetup('pdf');
+    await s.check();
+    await s.check();
+    expect(s.checks()).toBe(1);
+    // Requests at the same moment share one run.
+    fs.writeFileSync(path.join(s.acme, 'resume.docx'), 'PK edited again');
+    await Promise.all([s.check(), s.check(), s.check()]);
+    expect(s.checks()).toBe(2);
+    for (const f of ['resume_state.json', 'letter_state.json', 'cover_letter.pdf']) {
+      fs.writeFileSync(path.join(s.acme, f), `changed ${f}`);
+      await s.check();
+    }
+    expect(s.checks()).toBe(5);
+  });
+
+  it("anything odd is an error, never 'current': not JSON, wrong format, wrong id, a path outside the packet, a failed exit, a timeout, no script", async () => {
+    const s = pdfSetup('pdf');
+    const answer = async (files: string, exit?: string) => {
+      fs.writeFileSync(path.join(s.bin, 'files.json'), files);
+      if (exit) fs.writeFileSync(path.join(s.bin, 'files-exit'), exit);
+      else fs.rmSync(path.join(s.bin, 'files-exit'), { force: true });
+      fs.writeFileSync(path.join(s.acme, 'resume_state.json'), String(Math.random())); // a new cache key each time
+      return (await s.check()).body;
+    };
+    expect((await answer('not json')).error).toMatch(/didn't print JSON/);
+    expect((await answer('{"id": "x"}')).error).toMatch(/files format/);
+    expect((await answer(JSON.stringify({ id: '2026-10-28-globex-ops-analyst', files: {}, notes: [] }))).error).toMatch(/answered for "2026-10-28-globex-ops-analyst"/);
+    // A path that isn't the packet's own PDF doesn't count as current.
+    fs.writeFileSync(path.join(s.root, 'outside/resume.pdf'), '%PDF elsewhere');
+    expect((await answer(JSON.stringify({ id: ACME, files: { resume: path.join(s.root, 'outside/resume.pdf') }, notes: [] }))).resume.state).toBe('outdated');
+    expect((await answer('', '2')).error).toMatch(/exit 2/);
+    // Errors aren't cached: the next look asks again.
+    const before = s.checks();
+    await s.check();
+    expect(s.checks()).toBe(before + 1);
+    fs.rmSync(path.join(s.career, 'scripts/fill_plan.py'));
+    expect((await answer(filesJson(s, ['resume']))).error).toMatch(/No scripts\/fill_plan.py inside/);
+  });
+
+  it('a check that hangs is stopped at its timeout and reported as an error', async () => {
+    const s = pdfSetup('pdf');
+    fs.writeFileSync(path.join(s.bin, 'files-sleep'), '5');
+    const checker = hubPdfChecker(s.fake!.uv, 300);
+    const item = readQueue(s.file).items[0];
+    expect(await checker(s.career, item)).toEqual({ error: "The command didn't finish within 0.3 seconds, so it was stopped" });
+  });
+
+  it("Rebuild PDF: checks first, runs resume_state.py pdf with separate arguments, and succeeds only when Career HQ's check lists the PDF", async () => {
+    const s = pdfSetup('pdf');
+    fs.writeFileSync(path.join(s.bin, 'files-after.json'), filesJson(s, ['resume', 'cover_letter']));
+    const dry = await s.launch('resume-pdf', ACME, { dryRun: true });
+    expect(dry.body).toMatchObject({ dryRun: true, cwd: s.career, argv: [s.fake!.uv, 'run', 'python', 'scripts/resume_state.py', 'pdf', ACME] });
     expect(dry.body.command).toBe(`cd ~/career && uv run python scripts/resume_state.py pdf ${ACME}`);
-    expect(fake!.ran()).toBe(false);
-    const res = await launch('resume-pdf', ACME);
+    expect(s.fake!.calls()).toEqual([]);
+    const res = await s.launch('resume-pdf', ACME);
     expect(res.status).toBe(200);
     expect(res.cache).toBe('no-store');
     expect(res.body.message).toBe(`${ACME}: Word saved resume.pdf from resume.docx (1 page)`);
-    expect(res.body.queue.items[0].resumePdfOutdated).toBe(false);
-    expect(fake!.calls()).toEqual([`run python scripts/resume_state.py pdf ${ACME}`]);
-    expect(fake!.env()).not.toMatch(/X_HUB|ANTHROPIC|CLAUDE/);
-    // Now resume.pdf is as new as the edits, so there's nothing to rebuild.
-    expect((await launch('resume-pdf', ACME)).body.error).toMatch(/already as new as resume.docx/);
+    expect(res.body.check.resume.state).toBe('current');
+    expect(s.fake!.calls()).toEqual([`run python scripts/fill_plan.py files ${ACME}`, `run python scripts/resume_state.py pdf ${ACME}`, `run python scripts/fill_plan.py files ${ACME}`]);
+    expect(s.fake!.env()).not.toMatch(/X_HUB|ANTHROPIC|CLAUDE/);
+    // The page's next look gets the new answer from the cache the rebuild refreshed.
+    expect((await s.check()).body.resume.state).toBe('current');
+    // Now Career HQ lists it as current, so there's nothing to rebuild (and nothing runs but the check).
+    const again = await s.launch('resume-pdf', ACME);
+    expect(again.status).toBe(409);
+    expect(again.body.error).toMatch(/lists resume.pdf as current/);
+    expect(s.fake!.calls().filter((c) => c.includes('resume_state.py'))).toHaveLength(1);
   });
 
-  it('Rebuild PDF failures: the export fails, or exits 0 but resume.pdf is still older; the command to copy comes back', async () => {
+  it("Rebuild PDF failures: the export fails, Career HQ's check still doesn't list it, or the check itself fails; the command to copy comes back", async () => {
     const failed = pdfSetup('pdf-fail');
     const res = await failed.launch('resume-pdf', ACME);
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("error: Word couldn't export the PDF: the resume is still open in Word (exit 1)");
     expect(res.body.command).toBe(`cd ~/career && uv run python scripts/resume_state.py pdf ${ACME}`);
-    expect(failed.fake!.calls()).toHaveLength(1);
     const stale = pdfSetup('pdf-stale');
     const r2 = await stale.launch('resume-pdf', ACME);
     expect(r2.status).toBe(500);
-    expect(r2.body.error).toMatch(/resume.pdf is still older than resume.docx/);
+    expect(r2.body.error).toMatch(/still doesn't list resume.pdf as current/);
     expect(r2.body.command).toBe(`cd ~/career && uv run python scripts/resume_state.py pdf ${ACME}`);
+    const broken = pdfSetup('pdf', { files: 'garbage' });
+    const r3 = await broken.launch('resume-pdf', ACME);
+    expect(r3.status).toBe(500);
+    expect(r3.body.error).toMatch(/PDF check failed, so nothing was rebuilt/);
+    expect(broken.fake!.calls().filter((c) => c.includes('resume_state.py'))).toHaveLength(0);
   });
 
-  it('Rebuild PDF refuses before running: not edited, PDF already current, no resume.docx, no script, another command running', async () => {
-    for (const [st, pdf] of [['generated', 'older'], ['edited', 'newer'], ['edited_pdf_outdated', 'newer']] as const) {
-      const { launch, fake } = pdfSetup('pdf', st, pdf);
-      expect((await launch('resume-pdf', ACME)).status).toBe(409);
-      expect(fake!.ran()).toBe(false);
-    }
+  it('Rebuild PDF refuses before running: no resume.docx, no script, another command running', async () => {
     const s = pdfSetup('pdf');
     fs.rmSync(path.join(s.acme, 'resume.docx'));
     expect((await s.launch('resume-pdf', ACME)).body.error).toMatch(/no resume.docx/);
@@ -974,20 +1064,21 @@ describe('Resume in Word: open-resume, the resume state and Rebuild PDF', () => 
     fs.writeFileSync(path.join(s.root, 'outside/resume_state.py'), '# outside');
     fs.symlinkSync(path.join(s.root, 'outside/resume_state.py'), path.join(s.career, 'scripts/resume_state.py'));
     expect((await s.launch('resume-pdf', ACME)).status).toBe(409);
-    expect(s.fake!.ran()).toBe(false);
+    expect(s.fake!.calls()).toEqual([]);
     // Shares the one-per-project lock with every Career HQ command.
     const p = { slug: 'career', repos: [s.career], folders: [] } as never;
     fs.rmSync(path.join(s.career, 'scripts/resume_state.py'));
     fs.writeFileSync(path.join(s.career, 'scripts/resume_state.py'), '# stand-in\n');
     const busy = await resumePdf({ kind: 'resume-pdf', slug: 'career', id: ACME }, { project: () => p, uvPath: s.fake!.uv, home: s.root, running: new Set(['career']) });
     expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
-    expect(s.fake!.ran()).toBe(false);
+    expect(s.fake!.calls()).toEqual([]);
   });
 
   it('none of it reaches the MCP tools', async () => {
-    const { call } = pdfSetup('pdf');
+    const { call, check } = pdfSetup('pdf');
+    await check();
     for (const url of ['/agent/v1/projects', '/agent/v1/projects/career']) {
-      expect(JSON.stringify((await call('GET', url, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/resume|edited_pdf/i);
+      expect(JSON.stringify((await call('GET', url, undefined, { 'X-Agent-Token': AGENT_TOKEN })).body)).not.toMatch(/resume|letter|pdf/i);
     }
   });
 });

@@ -45,7 +45,7 @@ export function useCareerLaunch(slug: string, setNotice: (n: Notice | null) => v
     },
     // Nothing retries. The queue, feed and card may have changed (a refused duplicate, a status), so reload them.
     onSettled: () => {
-      for (const key of ['applications', 'job-feed', 'projects']) void queryClient.invalidateQueries({ queryKey: [key] });
+      for (const key of ['applications', 'job-feed', 'projects', 'pdf-check']) void queryClient.invalidateQueries({ queryKey: [key] });
     },
   });
 }

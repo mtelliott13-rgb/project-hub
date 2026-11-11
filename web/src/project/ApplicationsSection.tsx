@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { createContext, useContext, useState, type MouseEvent } from 'react';
 import { APP_STATUSES, limitFlags, limitSummary, manualJobInput, MANUAL_MAX_TEXT_BYTES, queueSummary, sha256Hex, sortApplications, utf8Bytes, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { approveShorterDraft, launchManualJob, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
+import { approveShorterDraft, fetchPdfCheck, launchManualJob, type DocCheck, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch, WHAT } from './career-launch.ts';
 import type { SectionProps } from './sections.tsx';
@@ -80,6 +80,12 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
     if ((e.target as HTMLElement).closest('button, a, select, input')) return;
     if (app.files.fillSheet) onOpen();
   };
+  // Career HQ's own check (the one /apply runs before each upload) says whether each PDF is current.
+  const pdfs = useQuery({ queryKey: ['pdf-check', slug, app.id], queryFn: () => fetchPdfCheck(slug, app.id), enabled: app.files.resumeDocx || app.files.coverLetterDocx });
+  const checked = pdfs.data && !('error' in pdfs.data) ? pdfs.data : null;
+  const checkError = pdfs.data && 'error' in pdfs.data ? pdfs.data.error : pdfs.error?.message;
+  const resumeStale = !!checked?.resume && checked.resume.state !== 'current';
+  const letterStale = !!checked?.letter && checked.letter.state !== 'current';
   const facts = [app.location, app.added && `added ${fmtDate(app.added)}`, app.status === 'submitted' && app.submittedOn && `submitted ${fmtDate(app.submittedOn)}`].filter(Boolean);
   return (
     <li
@@ -119,9 +125,14 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
       </div>
       {app.notes && <p className="mt-1 text-sm whitespace-pre-line text-stone-600 dark:text-stone-400">{app.notes}</p>}
       {app.problems.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {app.problems.join(' · ')}</p>}
-      {app.letter === 'edited' && <LetterNotSynced app={app} repo={repo} />}
-      {app.resumePdfOutdated && <ResumePdfOutdated app={app} repo={repo} busy={busy} launching={launching} onLaunch={onLaunch} />}
-      {(app.resume === 'edited' || app.resume === 'edited_pdf_outdated') && !app.resumePdfOutdated && (
+      {letterStale && <LetterNotSynced app={app} repo={repo} doc={checked!.letter!} />}
+      {resumeStale && <ResumePdfOutdated app={app} repo={repo} doc={checked!.resume!} busy={busy} launching={launching} onLaunch={onLaunch} />}
+      {checkError && (
+        <p className="mt-1 text-xs text-stone-500" data-testid="pdf-check-error">
+          Couldn't check the PDFs with Career HQ: {checkError}
+        </p>
+      )}
+      {(app.resume === 'edited' || app.resume === 'edited_pdf_outdated') && !resumeStale && (
         <p className="mt-1 text-xs text-stone-500" data-testid="resume-edited">
           Resume edited in Word · rebuilds keep your edits
         </p>
@@ -294,14 +305,17 @@ export function ApplicationsSection({ project, run }: SectionProps) {
   );
 }
 
-/** Word edits to the cover letter that Career HQ hasn't synced yet: /apply leaves the letter PDF out until they are. */
-function LetterNotSynced({ app, repo }: { app: Application; repo: string }) {
+/**
+ * Career HQ's check doesn't list cover_letter.pdf as current (Word edits not
+ * synced, or no PDF yet): /apply leaves the letter out until a sync.
+ */
+function LetterNotSynced({ app, repo, doc }: { app: Application; repo: string; doc: DocCheck }) {
   const command = `cd ${repo} && uv run python scripts/letter_sync.py sync ${quoteArg(app.id)}`;
   return (
-    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="letter-edited">
+    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="letter-edited" title={doc.note ?? undefined}>
       <p>
-        ⚠ Cover letter has Word edits that aren't synced yet, so the PDF may be out of date
-        {app.status === 'reviewed' ? ' and Fill application will leave the letter out' : ''}. To sync:
+        ⚠ {doc.state === 'no-pdf' ? 'No cover_letter.pdf yet' : "cover_letter.pdf wasn't made from cover_letter.docx as it is now (Word edits not synced)"}
+        {app.status === 'reviewed' ? ', so Fill application will leave the letter out' : ''}. To sync:
       </p>
       <div className="flex items-start gap-2">
         <code className="min-w-0 flex-1 rounded bg-amber-50 px-2 py-1 break-all text-stone-800 dark:bg-amber-950 dark:text-stone-200">{command}</code>
@@ -402,16 +416,16 @@ function AddJob({ slug, busy, setNotice }: { slug: string; busy: boolean; setNot
 }
 
 /**
- * resume.pdf is older than your Word edits to resume.docx, so Fill application
+ * Career HQ's check doesn't list resume.pdf as current (Word edits since, or no PDF yet), so Fill application
  * leaves the resume out. Rebuild PDF runs Career HQ's resume_state.py pdf (Word
  * saves the PDF); the command to copy stays as the fallback.
  */
-function ResumePdfOutdated({ app, repo, busy, launching, onLaunch }: { app: Application; repo: string; busy: boolean; launching: CareerLaunchKind | null; onLaunch: (kind: CareerLaunchKind) => void }) {
+function ResumePdfOutdated({ app, repo, doc, busy, launching, onLaunch }: { app: Application; repo: string; doc: DocCheck; busy: boolean; launching: CareerLaunchKind | null; onLaunch: (kind: CareerLaunchKind) => void }) {
   const command = `cd ${repo} && uv run python scripts/resume_state.py pdf ${quoteArg(app.id)}`;
   return (
-    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="resume-pdf-outdated">
+    <div className="mt-1 space-y-1 text-xs text-amber-800 dark:text-amber-300" data-testid="resume-pdf-outdated" title={doc.note ?? undefined}>
       <p>
-        ⚠ Resume has Word edits newer than resume.pdf
+        ⚠ {doc.state === 'no-pdf' ? 'No resume.pdf yet' : "resume.pdf wasn't made from resume.docx as it is now (Word edits since)"}
         {app.status === 'reviewed' ? ', so Fill application will leave the resume out' : ''}. Close the resume in Word, then:
       </p>
       <div className="flex flex-wrap items-start gap-2">

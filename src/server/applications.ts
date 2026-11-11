@@ -61,12 +61,6 @@ export type Application = {
   letter: string | null;
   /** State of resume.docx as the queue reports it (generated | edited | edited_pdf_outdated), as written; null when not set. */
   resume: string | null;
-  /**
-   * The queue calls the resume edited (edited or edited_pdf_outdated) and
-   * resume.pdf is missing or older than resume.docx, by their modification
-   * times now (Career HQ's own rule), so it's right as soon as you save in Word.
-   */
-  resumePdfOutdated: boolean;
   /** Which packet files exist (only inside the repo; see packetDir). */
   files: { resume: boolean; resumeDocx: boolean; coverLetter: boolean; coverLetterDocx: boolean; fillSheet: boolean };
   /** Missing required fields and the like, shown on the card. */
@@ -159,18 +153,6 @@ export function packetFile(root: string, packet: string | null, name: string): s
   }
 }
 
-/** resume.docx exists and resume.pdf is missing or older (mtimes; read only). */
-export function pdfOlderThanDocx(root: string, packet: string | null): boolean {
-  const docx = packetFile(root, packet, RESUME_DOCX);
-  if (!docx) return false;
-  const pdf = packetFile(root, packet, PACKET_FILES.resume);
-  try {
-    return !pdf || fs.statSync(pdf).mtimeMs < fs.statSync(docx).mtimeMs;
-  } catch {
-    return true;
-  }
-}
-
 export function parseQueue(text: string, file: string): Queue {
   let data: unknown;
   try {
@@ -223,7 +205,6 @@ export function parseQueue(text: string, file: string): Queue {
       notes: str(it.notes),
       letter,
       resume,
-      resumePdfOutdated: (resume === 'edited' || resume === 'edited_pdf_outdated') && pdfOlderThanDocx(root, packet),
       files: {
         resume: !!packetFile(root, packet, PACKET_FILES.resume),
         resumeDocx: !!packetFile(root, packet, RESUME_DOCX),

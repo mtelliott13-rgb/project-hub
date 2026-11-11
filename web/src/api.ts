@@ -210,6 +210,11 @@ export type CareerLaunchKind = 'open-letter' | 'open-resume' | 'resume-pdf' | 'l
 export const runCareerLaunch = (kind: CareerLaunchKind, slug: string, id: string) =>
   hub<{ command: string; message: string }>('/api/launch', { method: 'POST', body: { kind, slug, id } });
 
+/** Career HQ's upload-time check of an application's resume and cover letter PDFs (fill_plan.py files), via the hub's cache. */
+export type { DocCheck, PdfCheck } from '../../src/server/pdf-check.ts';
+import type { PdfCheck } from '../../src/server/pdf-check.ts';
+export const fetchPdfCheck = (slug: string, id: string) => hub<PdfCheck>(`/api/projects/${slug}/applications/${encodeURIComponent(id)}/pdf-check`);
+
 /**
  * "Add a job": Career HQ's launch-manual with a link, pasted posting text, or
  * both. The text goes only to the hub, which hands it to Career HQ on stdin.

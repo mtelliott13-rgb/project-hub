@@ -43,6 +43,8 @@ import {
   launchBuildSchema,
   launchManual,
   launchManualSchema,
+  hubPdfChecker,
+  pdfCheckFor,
   openLetter,
   openLetterSchema,
   openResume,
@@ -131,6 +133,8 @@ export function createApp(deps: AppDeps) {
   const startClicked = new Map<string, number>();
   // Projects with a Career HQ command (status, approve-draft, open-letter, open-resume, resume-pdf, launch-apply, launch-build, launch-manual) running now.
   const queueRuns = new Set<string>();
+  // Career HQ's PDF check (fill_plan.py files), with one cache for the whole hub.
+  const pdfChecker = hubPdfChecker(deps.uvPath);
   const app = new Hono();
 
   // Only answer requests addressed to the hub itself. This stops DNS rebinding:
@@ -275,6 +279,17 @@ export function createApp(deps: AppDeps) {
     return c.body(null, 204);
   });
 
+  /**
+   * Whether an application's resume.pdf and cover_letter.pdf are current, by
+   * Career HQ's own upload-time check (fill_plan.py files <id>), cached until
+   * one of the packet's files changes. Read only; no-store; page token only.
+   */
+  app.get('/api/projects/:slug/applications/:id/pdf-check', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const r = await pdfCheckFor(c.req.param('slug'), c.req.param('id'), { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns, pdfChecker });
+    return c.json(r.body, r.status);
+  });
+
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
     // Career HQ's own commands (a status, approving a draft, Open letter/resume
@@ -282,7 +297,7 @@ export function createApp(deps: AppDeps) {
     // and report its result.
     const kind = (body as { kind?: unknown } | null)?.kind;
     if ((CAREER_KINDS as readonly unknown[]).includes(kind)) {
-      const careerDeps = { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns };
+      const careerDeps = { project: projectRow, uvPath: deps.uvPath, home: deps.home ?? os.homedir(), running: queueRuns, pdfChecker };
       const run = async () => {
         const fail = (e: z.ZodError) => ({ status: 400 as const, body: { error: `bad ${kind} request: ${e.issues[0].path.join('.')} ${e.issues[0].message}` } });
         const one = <T,>(schema: z.ZodType<T>, go: (req: T, d: typeof careerDeps) => Promise<QueueStatusResult>) => {

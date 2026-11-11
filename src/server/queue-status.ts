@@ -23,6 +23,7 @@ import { fillSheetFor, findQueueFiles, QueueError, queueRoot, readQueue, withLim
 import { FeedError, feedRoot, findFeedFiles, POSTING_ID, readFeed } from './job-feed.ts';
 import type { Project } from './db/schema.ts';
 import { shellQuote } from './launcher.ts';
+import { createPdfChecker, type PdfCheck, type PdfChecker } from './pdf-check.ts';
 import { APP_STATUSES, httpsLinkProblem, postingTextProblem, utf8Bytes } from './queue-rules.ts';
 
 export const QUEUE_SCRIPT = 'scripts/review_queue.py';
@@ -106,7 +107,21 @@ export type QueueStatusDeps = {
   /** Projects with a Career HQ command running now (one at a time each). */
   running: Set<string>;
   timeoutMs?: number;
+  /** Career HQ's PDF check (fill_plan.py files); one per hub so its cache is shared. */
+  pdfChecker?: PdfChecker;
 };
+
+/** A checker for the hub, running Career HQ's command with the same runner as the buttons. */
+export function hubPdfChecker(uvPath: string, timeoutMs?: number): PdfChecker {
+  return createPdfChecker({
+    uvPath,
+    timeoutMs,
+    run: async (argv, cwd, t) => {
+      const r = await runCommand(argv, cwd, t, 'fill_plan.py files', '');
+      return r.ok ? { ok: true, stdout: r.stdout } : { ok: false, error: r.error };
+    },
+  });
+}
 
 export type QueueStatusResult = { status: 200 | 400 | 404 | 409 | 500; body: Record<string, unknown> };
 
@@ -196,10 +211,22 @@ function find(slug: string, id: string, deps: QueueStatusDeps): Found | QueueSta
   }
 }
 
+type RunOpts = {
+  timeoutMs?: number;
+  /** review_queue.py unless named. */
+  script?: string;
+  /** Written to the command's stdin, then closed. Never logged or returned; a dry run reports only its size. */
+  stdin?: string;
+  /** The command to copy, when the plain one would leave out what goes on stdin. */
+  shownCommand?: string;
+  /** Runs inside the lock, just before the command; a result stops it there. */
+  before?: (command: string) => Promise<QueueStatusResult | null>;
+};
+
 /**
- * Checks the script and uv, then (unless dryRun) runs `<script> <args>`
- * (review_queue.py unless named) in the repo, one per project at a time.
- * `check` confirms the command did what it said, once it exits 0.
+ * Checks the script and uv, then (unless dryRun) runs `<script> <args>` in
+ * the repo, one per project at a time. `check` confirms the command did what
+ * it said, once it exits 0.
  */
 async function runInRepo(
   f: Where,
@@ -207,13 +234,8 @@ async function runInRepo(
   what: string,
   dryRun: boolean | undefined,
   deps: QueueStatusDeps,
-  check: (run: { output: string; stdout: string }, command: string) => QueueStatusResult,
-  timeoutMs = TIMEOUT_MS,
-  script = QUEUE_SCRIPT,
-  /** Written to the command's stdin, then closed. Never logged or returned; a dry run reports only its size. */
-  stdin?: string,
-  /** The command to copy, when the plain one would leave out what goes on stdin. */
-  shownCommand?: string,
+  check: (run: { output: string; stdout: string }, command: string) => QueueStatusResult | Promise<QueueStatusResult>,
+  { timeoutMs = TIMEOUT_MS, script = QUEUE_SCRIPT, stdin, shownCommand, before }: RunOpts = {},
 ): Promise<QueueStatusResult> {
   const { p, root } = f;
   const command = shownCommand ?? copyCommand(root, args, deps.home, script);
@@ -232,10 +254,12 @@ async function runInRepo(
 
   deps.running.add(p.slug);
   try {
+    const stop = before ? await before(command) : null;
+    if (stop) return stop;
     console.log(`${new Date().toISOString()} Applications: ${p.slug}: cd ${root} && ${argv.map(shellQuote).join(' ')}`);
     const run = await runCommand(argv, root, deps.timeoutMs ?? timeoutMs, what, stdin);
     if (!run.ok) return { status: 500, body: { error: run.error, output: run.output, command } };
-    return check(run, command);
+    return await check(run, command);
   } finally {
     deps.running.delete(p.slug);
   }
@@ -318,37 +342,54 @@ export async function openResume(req: OpenResumeRequest, deps: QueueStatusDeps):
 
 /**
  * "Rebuild PDF": Career HQ has Word save resume.pdf from your edited
- * resume.docx (`resume_state.py pdf <id>`). Only while the queue calls the
- * resume edited and resume.pdf is older than resume.docx (their mtimes, read
- * now). Success needs exit 0 and resume.pdf no longer older.
+ * resume.docx (`resume_state.py pdf <id>`). Inside the lock, Career HQ's own
+ * check (fill_plan.py files) runs first, and the rebuild is refused if it
+ * already lists resume.pdf as current. Success needs exit 0 and a fresh check
+ * listing it.
  */
 export async function resumePdf(req: ResumePdfRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
   const f = find(req.slug, req.id, deps);
   if ('status' in f && 'body' in f) return f;
   if (!f.item.files.resumeDocx) return { status: 409, body: { error: `${req.id} has no resume.docx yet` } };
-  if (!f.item.resumePdfOutdated) {
-    const why = f.item.resume === 'edited' || f.item.resume === 'edited_pdf_outdated' ? 'resume.pdf is already as new as resume.docx' : `the queue shows the resume as "${f.item.resume ?? 'not set'}", not edited`;
-    return { status: 409, body: { error: `Nothing to rebuild for ${req.id}: ${why}` } };
-  }
+  const checker = deps.pdfChecker ?? hubPdfChecker(deps.uvPath, deps.timeoutMs);
+  const checkNow = () => checker(f.root, f.item, { fresh: true });
+  const resumeState = (c: PdfCheck) => ('error' in c ? null : c.resume?.state);
   return runInRepo(
     f,
     ['pdf', req.id],
     'resume_state.py pdf',
     req.dryRun,
     deps,
-    (run, command) => {
-      const now = queueNow(f.p);
-      const item = now?.items.find((i) => i.id === req.id);
-      if (!now || !item || item.resumePdfOutdated) {
-        return { status: 500, body: { error: `The command finished, but ${item ? 'resume.pdf is still older than resume.docx' : "the queue couldn't be read afterwards"}`, output: run.output, command } };
+    async (run, command) => {
+      const after = await checkNow();
+      if ('error' in after) return { status: 500, body: { error: `Word finished, but Career HQ's PDF check failed: ${after.error}`, output: run.output, command } };
+      if (after.resume?.state !== 'current') {
+        return { status: 500, body: { error: "The command finished, but Career HQ's check still doesn't list resume.pdf as current", output: run.output, command } };
       }
       // Career HQ's answer ("…: Word saved resume.pdf from resume.docx (1 page)"), plus a page-count warning if it printed one.
       const message = run.stdout.trim().split('\n').filter(Boolean).join(' ') || 'Word saved resume.pdf.';
-      return { status: 200, body: { ok: true, command, message, output: run.output, queue: now } };
+      return { status: 200, body: { ok: true, command, message, output: run.output, check: after } };
     },
-    PDF_TIMEOUT_MS,
-    RESUME_SCRIPT,
+    {
+      timeoutMs: PDF_TIMEOUT_MS,
+      script: RESUME_SCRIPT,
+      before: async (command) => {
+        const now = await checkNow();
+        if ('error' in now) return { status: 500, body: { error: `Career HQ's PDF check failed, so nothing was rebuilt: ${now.error}`, command } };
+        if (resumeState(now) === 'current') return { status: 409, body: { error: `Nothing to rebuild for ${req.id}: Career HQ's check lists resume.pdf as current`, check: now } };
+        return null;
+      },
+    },
   );
+}
+
+/** Career HQ's PDF check for one application (the page asks per card), from the hub's cache when nothing changed. */
+export async function pdfCheckFor(slug: string, id: string, deps: Pick<QueueStatusDeps, 'project' | 'uvPath' | 'home' | 'running' | 'pdfChecker'>): Promise<QueueStatusResult> {
+  if (!APP_ID.test(id)) return { status: 400, body: { error: 'must look like YYYY-MM-DD-company-title' } };
+  const f = find(slug, id, deps as QueueStatusDeps);
+  if ('status' in f && 'body' in f) return f;
+  const checker = deps.pdfChecker ?? hubPdfChecker(deps.uvPath);
+  return { status: 200, body: await checker(f.root, f.item) };
 }
 
 /**
@@ -370,7 +411,7 @@ export async function launchApply(req: LaunchApplyRequest, deps: QueueStatusDeps
     req.dryRun,
     deps,
     (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
-    LAUNCH_TIMEOUT_MS,
+    { timeoutMs: LAUNCH_TIMEOUT_MS },
   );
 }
 
@@ -410,7 +451,7 @@ export async function launchBuild(req: LaunchBuildRequest, deps: QueueStatusDeps
     req.dryRun,
     deps,
     (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
-    LAUNCH_TIMEOUT_MS,
+    { timeoutMs: LAUNCH_TIMEOUT_MS },
   );
 }
 
@@ -448,10 +489,7 @@ export async function launchManual(req: LaunchManualRequest, deps: QueueStatusDe
     req.dryRun,
     deps,
     (run, command) => ({ status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Opened in Terminal.'), output: run.output } }),
-    LAUNCH_TIMEOUT_MS,
-    QUEUE_SCRIPT,
-    text ?? '',
-    shown,
+    { timeoutMs: LAUNCH_TIMEOUT_MS, stdin: text ?? '', shownCommand: shown },
   );
   // "that link already has a packet: <id>": name the packet, if the queue lists it, so the page can jump to its card.
   const dup = result.status === 500 && typeof result.body.error === 'string' ? /that link already has a packet: (\S+)/.exec(result.body.error)?.[1] : undefined;
