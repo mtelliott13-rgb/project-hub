@@ -1,0 +1,28 @@
+# Sample toolkit checklist (made up). Format: Project Hub's CLAUDE.md, "Toolkit checklist".
+items:
+  - name: CI on every push
+    category: Quality
+    url: https://example.com/ci
+    cost: Free for public repos
+    why: Typecheck and tests run before anything lands.
+    hours: 1
+    priority: high
+    status: done
+
+  - name: Screenshot for the README
+    category: Docs
+    url: https://example.com/screenshot-tips
+    cost: Free
+    why: Shows what it does before anyone installs it.
+    hours: 0.5
+    priority: medium
+    status: in progress
+
+  - name: Short demo video
+    category: Docs
+    url: https://example.com/screen-recorder
+    cost: Free
+    why: Resume and launch are easier to show than to describe.
+    hours: 2
+    priority: low
+    status: not started

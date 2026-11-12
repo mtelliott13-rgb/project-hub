@@ -91,9 +91,12 @@ I built this with Claude Code, spec first:
 
 ## Try it with sample data
 
-`sample-data/` holds made-up projects, ideas, a toolkit checklist and a fake
-Career HQ queue, so you can see every section without your own data. It runs on
-port 4748 and doesn't touch `~/.project-hub/` or read your Claude Code sessions.
+`sample-data/` is modeled on my own projects (Career HQ, Market Data Pipeline, a land
+cover change detection class project, and Project Hub itself), but all of its
+content is made up: notes, ideas, toolkit checklists, files and a fake Career HQ
+application queue and job feed. It shows every section without your own data.
+It runs on port 4748 and doesn't touch `~/.project-hub/` or read your Claude
+Code sessions. The screenshot above is this sample data.
 
 Needs Node.js 22.18 or newer, and pnpm (`corepack enable` turns it on).
 
@@ -108,8 +111,9 @@ pnpm sample       # starts the hub on the sample data
 Then open:
 
 - <http://127.0.0.1:4748/>: home page with the project cards
-- <http://127.0.0.1:4748/p/job-search>: Applications and Job feed
-- <http://127.0.0.1:4748/p/trail-weather>: Toolkit and notes
+- <http://127.0.0.1:4748/p/career-hq>: Applications and Job feed
+- <http://127.0.0.1:4748/p/land-cover>: Toolkit and notes
+- <http://127.0.0.1:4748/ideas>: Ideas across all four projects
 
 Press Ctrl+C in the terminal to stop it. A sample run writes its database and
 tokens into `sample-data/`, and git ignores them.

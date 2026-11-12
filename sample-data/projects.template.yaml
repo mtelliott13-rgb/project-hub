@@ -1,25 +1,30 @@
-# Sample projects for `pnpm sample`. Everything here is made up.
+# Sample projects for `pnpm sample`. Modeled on the kinds of projects I run
+# through the hub; every note, idea, file and application here is made up.
 # `pnpm sample` copies this to projects.yaml (gitignored) with {{SAMPLE}}
 # replaced by this folder's absolute path, then runs the hub against it.
 projects:
-  - slug: trail-weather
-    name: Trail Weather
-    folders: [{{SAMPLE}}/workspace/trail-weather]
-    keywords: [trail weather, forecast]
+  # Job-application automation: finds postings, builds application packets,
+  # and fills forms for my review.
+  - slug: career-hq
+    name: Career HQ
+    folders: [{{SAMPLE}}/workspace/career-hq]
+    keywords: [career hq, job application, cover letter]
 
-  - slug: recipe-box
-    name: Recipe Box
-    folders: [{{SAMPLE}}/workspace/recipe-box]
-    keywords: [recipe]
+  # Market-data collector and paper-trading system (simulated trades only).
+  - slug: market-data-pipeline
+    name: Market Data Pipeline
+    folders: [{{SAMPLE}}/workspace/market-data-pipeline]
+    keywords: [market data, paper trading, pipeline]
 
-  - slug: job-search
-    name: Job Search
-    # Holds a review queue in Career HQ's format, so the Applications and
-    # Job feed sections show.
-    folders: [{{SAMPLE}}/workspace/job-search]
-    keywords: [job search, application]
+  # Remote sensing class project: land cover classification and change
+  # detection from satellite imagery.
+  - slug: land-cover
+    name: Land Cover Change Detection
+    folders: [{{SAMPLE}}/workspace/land-cover]
+    keywords: [land cover, remote sensing, change detection]
 
-  - slug: old-blog
-    name: Old Blog
-    folders: [{{SAMPLE}}/workspace/old-blog]
-    archived: true
+  # This dashboard.
+  - slug: project-hub
+    name: Project Hub
+    folders: [{{SAMPLE}}/workspace/project-hub]
+    keywords: [project hub, dashboard]

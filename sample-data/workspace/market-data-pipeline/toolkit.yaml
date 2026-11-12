@@ -1,0 +1,47 @@
+# Sample toolkit checklist (made up). Format: Project Hub's CLAUDE.md, "Toolkit checklist".
+items:
+  - name: Market data API key
+    category: Data
+    url: https://example.com/market-data-api
+    cost: Free tier
+    why: Minute quotes and volume for the collector.
+    hours: 0.5
+    priority: high
+    priority_why: Nothing runs without data.
+    status: done
+
+  - name: Nightly database backup
+    category: Infrastructure
+    url: https://example.com/backup-tool
+    cost: Free
+    why: Months of collected quotes can't be fetched again.
+    hours: 1
+    priority: high
+    status: in progress
+
+  - name: Alert when the collector stops
+    category: Monitoring
+    url: https://example.com/uptime-alerts
+    cost: Free
+    why: A silent gap ruins a week of backtests.
+    hours: 1.5
+    priority: medium
+    status: not started
+
+  - name: Backtesting library
+    category: Analysis
+    url: https://example.com/backtesting
+    cost: Free
+    why: Test a rule on past data before paper-trading it.
+    hours: 6
+    time_note: learning curve
+    priority: medium
+    status: not started
+
+  - name: Paid real-time feed
+    category: Data
+    url: https://example.com/realtime-feed
+    cost: $29/month
+    why: Faster quotes, but not needed for paper trading.
+    priority: low
+    status: parked

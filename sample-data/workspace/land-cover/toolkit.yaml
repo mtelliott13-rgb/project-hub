@@ -1,0 +1,39 @@
+# Sample toolkit checklist (made up). Format: Project Hub's CLAUDE.md, "Toolkit checklist".
+items:
+  - name: Satellite imagery download account
+    category: Data
+    url: https://example.com/imagery-portal
+    cost: Free
+    why: Cloud-free scenes for both years.
+    hours: 0.5
+    priority: high
+    status: done
+
+  - name: Desktop GIS
+    category: Software
+    url: https://example.com/desktop-gis
+    cost: Free
+    why: Draw training polygons and lay out the final maps.
+    hours: 2
+    priority: high
+    status: done
+
+  - name: Cloud processing notebook
+    category: Software
+    url: https://example.com/cloud-notebook
+    cost: Free for students
+    why: Run the classifier on full scenes without a big laptop.
+    hours: 3
+    priority: medium
+    priority_why: Local runs take an hour per scene.
+    status: in progress
+
+  - name: Accuracy assessment script
+    category: Analysis
+    url: https://example.com/accuracy-tools
+    cost: Free
+    why: Confusion matrix and per-class accuracy for the report.
+    hours: 1
+    priority: high
+    target: 2026-11-08
+    status: not started
