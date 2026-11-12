@@ -25,7 +25,7 @@ export function hubFetch(base: string, token: string, fetcher: typeof fetch = fe
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
-const slug = z.string().regex(/^[a-z0-9-]+$/).describe('The project slug, e.g. "meme-radar" (list_projects gives them)');
+const slug = z.string().regex(/^[a-z0-9-]+$/).describe('The project slug, e.g. "career-hq" (list_projects gives them)');
 
 /** The tools, in order. test/phase9.test.ts pins this list. */
 export function createMcpServer(get: AgentFetch, version = '1.0.0') {

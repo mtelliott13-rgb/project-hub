@@ -1,6 +1,6 @@
 // Recently changed files (SPEC.md, Phase 6). Every active project's repos and
 // folders are watched with chokidar. Skipped: .git, node_modules, build output,
-// editor and OS litter, and in a repo anything git ignores (Meme Radar's data/
+// editor and OS litter, and in a repo anything git ignores (a data collector app's data/
 // holds a browser profile and a database that change all the time). Only file
 // names and times are kept, in memory; the first scan seeds the list from the
 // files' modification times, so a restart loses nothing that matters.

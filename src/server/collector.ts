@@ -1,4 +1,4 @@
-// A project's collector (projects.yaml `collector:`), e.g. Meme Radar's app:
+// A project's collector (projects.yaml `collector:`), e.g. a data collector app:
 // whether it's running, and plans to start or stop it. Starting and stopping
 // go through POST /api/launch with the Phase 2 safeguards; requests name only
 // the project, and the command, folder and process all come from here.

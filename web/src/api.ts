@@ -98,7 +98,7 @@ export const changeIdea = (idea: Idea, change: { text?: string; scope?: string; 
   hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'PUT', body: { expect: idea.text, ...change } });
 export const deleteIdea = (idea: Idea) => hub<Ideas>(`/api/ideas/${idea.line}`, { method: 'DELETE', body: { expect: idea.text } });
 
-// Collectors (projects.yaml `collector:`), e.g. Meme Radar's app.
+// Collectors (projects.yaml `collector:`), e.g. a data collector app.
 export type SourceHealth = { id: string; label: string; status: string; lastSuccess: string | null; lastError: string | null };
 export type CollectorStatus = (
   | { state: 'running'; pid: number; command: string; startedAt: string | null }
