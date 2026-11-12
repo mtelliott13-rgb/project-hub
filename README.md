@@ -9,6 +9,8 @@ I left off.
 
 ![Project Hub home page, running on the sample data](docs/screenshot.png)
 
+I use it every day on my own projects. The screenshot and sample-data/ use made-up content so my job applications, chats and notes stay private.
+
 **TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 238 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
