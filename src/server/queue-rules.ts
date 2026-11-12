@@ -2,7 +2,49 @@
 // the allowed values, the card's summary line and the display order.
 export const APP_STATUSES = ['draft', 'reviewed', 'submitted'] as const;
 export type AppStatus = (typeof APP_STATUSES)[number];
-export const FITS = ['strong', 'possible', 'stretch', 'skip'] as const;
+/** Career HQ's fit check tags (SPEC.md "Fit check"). The older possible / stretch / skip are gone; they show as unknown. */
+export const FITS = ['strong', 'reach', 'long_shot'] as const;
+export type Fit = (typeof FITS)[number];
+export const FIT_LABELS: Record<Fit, string> = { strong: 'Strong fit', reach: 'Reach', long_shot: 'Long shot' };
+/** The badge text: the label for a known tag, the value as written otherwise. */
+export const fitLabel = (fit: string) => (FIT_LABELS as Record<string, string>)[fit] ?? fit;
+
+/** What happened after submitting (the queue's `outcome`; missing means pending). Only submitted applications have one. */
+export const OUTCOMES = ['no_response', 'rejected', 'interview', 'offer'] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+/** What Career HQ's `review_queue.py outcome <id> <value>` takes: an outcome, or `pending` to clear it. */
+export const OUTCOME_CHOICES = [...OUTCOMES, 'pending'] as const;
+export type OutcomeChoice = (typeof OUTCOME_CHOICES)[number];
+export const OUTCOME_LABELS: Record<OutcomeChoice, string> = { no_response: 'No response', rejected: 'Rejected', interview: 'Interview', offer: 'Offer', pending: 'Pending' };
+
+export type OutcomeRow = { fit: Fit | null; counts: Record<OutcomeChoice, number>; total: number };
+/** Submitted applications by fit tag and outcome; `unknown` counts outcomes that aren't one of OUTCOMES (left out of the rows). */
+export type OutcomeTable = { rows: OutcomeRow[]; total: number; unknown: number };
+
+/**
+ * The same counts as Career HQ's `review_queue.py outcomes`: submitted
+ * applications only, one row per fit tag plus "no tag" (any other fit, or none;
+ * only when it has any), columns per outcome with pending for none.
+ */
+export function outcomeTable(items: readonly { status: string; fit: string | null; outcome: string | null }[]): OutcomeTable {
+  const empty = () => Object.fromEntries(OUTCOME_CHOICES.map((c) => [c, 0])) as Record<OutcomeChoice, number>;
+  const rows: OutcomeRow[] = [...FITS, null].map((fit) => ({ fit, counts: empty(), total: 0 }));
+  let unknown = 0;
+  for (const it of items) {
+    if (it.status !== 'submitted') continue;
+    const col = it.outcome ?? 'pending';
+    // "pending" written in the file isn't an outcome (Career HQ leaves the field out instead).
+    if (!(OUTCOMES as readonly string[]).includes(col) && !(col === 'pending' && it.outcome === null)) {
+      unknown++;
+      continue;
+    }
+    const row = rows.find((r) => r.fit === it.fit) ?? rows[rows.length - 1];
+    row.counts[col as OutcomeChoice]++;
+    row.total++;
+  }
+  const kept = rows.filter((r) => r.fit !== null || r.total > 0);
+  return { rows: kept, total: kept.reduce((n, r) => n + r.total, 0), unknown };
+}
 
 /** "2 drafts · 1 reviewed · 3 submitted" (drafts first, as on the card). */
 export function queueSummary(counts: Record<AppStatus, number>): string {

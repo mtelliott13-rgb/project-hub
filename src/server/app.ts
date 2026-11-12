@@ -49,9 +49,11 @@ import {
   openLetterSchema,
   openResume,
   openResumeSchema,
+  queueOutcomeSchema,
   queueStatusSchema,
   resumePdf,
   resumePdfSchema,
+  setQueueOutcome,
   type QueueStatusResult,
 } from './queue-status.ts';
 import { describePlan, LaunchError, launchRequestSchema, planLaunch, type Launcher } from './launcher.ts';
@@ -292,7 +294,7 @@ export function createApp(deps: AppDeps) {
 
   app.post('/api/launch', async (c) => {
     const body = await c.req.json().catch(() => null);
-    // Career HQ's own commands (a status, approving a draft, Open letter/resume
+    // Career HQ's own commands (a status, an outcome, approving a draft, Open letter/resume
     // in Word, Rebuild PDF, Fill application, Build packet): run in its repo,
     // and report its result.
     const kind = (body as { kind?: unknown } | null)?.kind;
@@ -307,6 +309,8 @@ export function createApp(deps: AppDeps) {
         switch (kind) {
           case 'queue-status':
             return one(queueStatusSchema, changeQueueStatus);
+          case 'queue-outcome':
+            return one(queueOutcomeSchema, setQueueOutcome);
           case 'approve-draft':
             return one(approveDraftSchema, approveDraft);
           case 'open-letter':

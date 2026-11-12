@@ -5,7 +5,7 @@ import type { FolderEntry } from '../../src/server/folders.ts';
 import type { ProjectInput } from '../../src/server/projects-file.ts';
 import type { ActivityEvent, ProjectActivity } from '../../src/server/activity.ts';
 import type { Application, FieldCount, FillPart, FillSheet, Queue, ShorterDraft } from '../../src/server/applications.ts';
-import type { AppStatus } from '../../src/server/queue-rules.ts';
+import type { AppStatus, OutcomeChoice } from '../../src/server/queue-rules.ts';
 import type { Feed, Posting } from '../../src/server/job-feed.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
@@ -190,6 +190,14 @@ export const fetchFillSheet = (slug: string, id: string) => hub<FillSheet>(`/api
  */
 export const setApplicationStatus = (slug: string, id: string, status: AppStatus, version: string) =>
   hub<{ command: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'queue-status', slug, id, status, version } });
+
+/**
+ * Runs Career HQ's `review_queue.py outcome` for a submitted application
+ * (`pending` clears it). `version` is the queue the page loaded. On failure the
+ * HubError's body has `command` (to copy) and `output`, or `current` on a 409.
+ */
+export const setApplicationOutcome = (slug: string, id: string, outcome: OutcomeChoice, version: string) =>
+  hub<{ command: string; message: string; queue: ShownQueue }>('/api/launch', { method: 'POST', body: { kind: 'queue-outcome', slug, id, outcome, version } });
 
 /**
  * Runs Career HQ's approve-draft for one pending shorter draft. `sha256` is of

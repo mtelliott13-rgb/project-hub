@@ -2,7 +2,10 @@
 // One card per application, drafts first and then by deadline. Changing a
 // status runs Career HQ's own command (`uv run python scripts/review_queue.py
 // status …`) through the hub; if it fails, its output and the command to copy
-// are shown. Clicking a card shows its fill sheet (fill_sheet.json, or
+// are shown. Submitted cards get outcome buttons (No response, Rejected,
+// Interview, Offer, Pending) that run Career HQ's `review_queue.py outcome`,
+// and the Submitted group opens with a fit tag × outcome table counted from
+// the queue. Clicking a card shows its fill sheet (fill_sheet.json, or
 // fill_sheet.md) with a Copy button on every field except notes and missing
 // values, and character counts against any limit. A pending shorter draft that
 // fits gets an Approve button, which runs Career HQ's approve-draft with the
@@ -16,8 +19,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Copy, ExternalLink, FileText, Loader2 } from 'lucide-react';
 import { createContext, useContext, useState, type MouseEvent } from 'react';
-import { APP_STATUSES, limitFlags, limitSummary, manualJobInput, MANUAL_MAX_TEXT_BYTES, queueSummary, sha256Hex, sortApplications, utf8Bytes, type AppStatus } from '../../../src/server/queue-rules.ts';
-import { approveShorterDraft, fetchPdfCheck, launchManualJob, type DocCheck, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
+import {
+  APP_STATUSES,
+  FIT_LABELS,
+  fitLabel,
+  limitFlags,
+  limitSummary,
+  manualJobInput,
+  MANUAL_MAX_TEXT_BYTES,
+  OUTCOME_CHOICES,
+  OUTCOME_LABELS,
+  outcomeTable,
+  queueSummary,
+  sha256Hex,
+  sortApplications,
+  utf8Bytes,
+  type AppStatus,
+  type OutcomeChoice,
+} from '../../../src/server/queue-rules.ts';
+import { approveShorterDraft, fetchPdfCheck, launchManualJob, type DocCheck, fetchFillSheet, fetchQueue, HubError, queueOk, setApplicationOutcome, setApplicationStatus, type Application, type CareerLaunchKind, type FieldCount, type FillPart, type ShorterDraft, type ShownQueue } from '../api.ts';
 import { Action, Modal, shortenHome } from '../ui.tsx';
 import { careerKey, careerRepo, quoteArg, useCareerBusy, useCareerLaunch, WHAT } from './career-launch.ts';
 import type { SectionProps } from './sections.tsx';
@@ -28,12 +48,13 @@ const statusLook: Record<AppStatus, string> = {
   submitted: 'border-green-500 bg-green-50 dark:bg-green-950',
 };
 
+// Amber is kept for "unknown value" flags, so no tag uses it.
 const fitLook: Record<string, string> = {
   strong: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300',
-  possible: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
-  stretch: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  skip: 'bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-400',
+  reach: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
+  long_shot: 'bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300',
 };
+const FIT_NAMES = Object.values(FIT_LABELS).join(' / ');
 
 const fmtDate = (ymd: string | null) => {
   if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
@@ -70,12 +91,15 @@ type CardProps = {
   busy: boolean;
   /** Which Career HQ launch is running for this card, if any. */
   launching: CareerLaunchKind | null;
+  /** The outcome being recorded for this card right now, if any. */
+  recording: OutcomeChoice | null;
   onStatus: (s: AppStatus) => void;
+  onOutcome: (o: OutcomeChoice) => void;
   onLaunch: (kind: CareerLaunchKind) => void;
   onOpen: () => void;
 };
 
-function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpen }: CardProps) {
+function Card({ app, slug, repo, run, busy, launching, recording, onStatus, onOutcome, onLaunch, onOpen }: CardProps) {
   const open = (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a, select, input')) return;
     if (app.files.fillSheet) onOpen();
@@ -116,14 +140,16 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
         {app.fit && (
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${app.fitKnown ? fitLook[app.fit] : 'bg-amber-100 text-amber-800 ring-1 ring-amber-400'}`}
-            title={app.fitKnown ? 'Fit verdict' : 'Not one of strong / possible / stretch / skip'}
+            title={app.fitKnown ? "Career HQ's fit check tag" : `"${app.fit}" isn't one of ${FIT_NAMES}`}
+            data-testid="fit"
           >
-            {app.fit}
+            {fitLabel(app.fit)}
             {!app.fitKnown && ' ⚠'}
           </span>
         )}
       </div>
       {app.notes && <p className="mt-1 text-sm whitespace-pre-line text-stone-600 dark:text-stone-400">{app.notes}</p>}
+      {app.status === 'submitted' && <OutcomeButtons app={app} busy={busy} recording={recording} onOutcome={onOutcome} />}
       {app.problems.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {app.problems.join(' · ')}</p>}
       {letterStale && <LetterNotSynced app={app} repo={repo} doc={checked!.letter!} />}
       {resumeStale && <ResumePdfOutdated app={app} repo={repo} doc={checked!.resume!} busy={busy} launching={launching} onLaunch={onLaunch} />}
@@ -207,6 +233,77 @@ function Card({ app, slug, repo, run, busy, launching, onStatus, onLaunch, onOpe
   );
 }
 
+/**
+ * What happened after submitting: one button per outcome, the current one
+ * pressed. Each runs Career HQ's `review_queue.py outcome <id> <value>`
+ * (Pending clears it); the card then shows the queue as Career HQ rewrote it.
+ */
+function OutcomeButtons({ app, busy, recording, onOutcome }: { app: Application; busy: boolean; recording: OutcomeChoice | null; onOutcome: (o: OutcomeChoice) => void }) {
+  // An unknown outcome presses nothing (the card's problem line flags it).
+  const current: OutcomeChoice | null = !app.outcomeKnown ? null : ((app.outcome as OutcomeChoice | null) ?? 'pending');
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="outcome">
+      <span className="text-stone-500">Outcome:</span>
+      <div role="group" aria-label={`Outcome of ${app.company} ${app.title}`} className="inline-flex overflow-hidden rounded-md border border-stone-300 dark:border-stone-700">
+        {OUTCOME_CHOICES.map((o) => {
+          const on = current === o;
+          return (
+            <button
+              key={o}
+              type="button"
+              aria-pressed={on}
+              disabled={busy}
+              title={o === 'pending' ? "Clears the outcome (Career HQ's outcome command)" : "Runs Career HQ's outcome command"}
+              onClick={() => !on && onOutcome(o)}
+              className={`border-l border-stone-300 px-2 py-1 first:border-l-0 disabled:opacity-60 dark:border-stone-700 ${
+                on ? 'bg-stone-800 font-medium text-white dark:bg-stone-200 dark:text-stone-900' : 'hover:bg-stone-100 dark:hover:bg-stone-800'
+              }`}
+            >
+              {recording === o ? <Loader2 size={12} className="inline animate-spin" aria-label="Saving" /> : OUTCOME_LABELS[o]}
+            </button>
+          );
+        })}
+      </div>
+      {app.outcome && app.outcomeOn && <span className="text-stone-500">recorded {fmtDate(app.outcomeOn)}</span>}
+    </div>
+  );
+}
+
+/** Submitted applications by fit tag and outcome, counted from the queue (the same counts as Career HQ's `review_queue.py outcomes`). */
+function OutcomeTableView({ items }: { items: Application[] }) {
+  const t = outcomeTable(items);
+  if (t.total === 0 && t.unknown === 0) return null;
+  const cell = (n: number) => <td className={`px-2 py-0.5 text-right tabular-nums ${n ? '' : 'text-stone-400 dark:text-stone-600'}`}>{n}</td>;
+  return (
+    <div className="mb-2 overflow-x-auto rounded-md border border-stone-200 p-2 dark:border-stone-800" data-testid="outcome-table">
+      <table className="text-xs">
+        <caption className="mb-1 text-left text-stone-500">Outcome by fit tag (submitted only)</caption>
+        <thead>
+          <tr className="text-stone-500">
+            <th className="px-2 py-0.5 text-left font-medium">Fit</th>
+            {OUTCOME_CHOICES.map((o) => (
+              <th key={o} className="px-2 py-0.5 text-right font-medium">
+                {OUTCOME_LABELS[o]}
+              </th>
+            ))}
+            <th className="px-2 py-0.5 text-right font-medium">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {t.rows.map((r) => (
+            <tr key={r.fit ?? 'none'} className="border-t border-stone-100 dark:border-stone-900">
+              <th className="px-2 py-0.5 text-left font-normal">{r.fit ? FIT_LABELS[r.fit] : 'No tag'}</th>
+              {OUTCOME_CHOICES.map((o) => cell(r.counts[o]))}
+              <td className="px-2 py-0.5 text-right font-medium tabular-nums">{r.total}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {t.unknown > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">⚠ {t.unknown} with an unknown outcome {t.unknown === 1 ? "isn't" : "aren't"} counted.</p>}
+    </div>
+  );
+}
+
 export function ApplicationsSection({ project, run }: SectionProps) {
   const slug = project.slug;
   const queryClient = useQueryClient();
@@ -237,6 +334,32 @@ export function ApplicationsSection({ project, run }: SectionProps) {
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['projects'] }),
   });
 
+  // Outcome buttons: Career HQ's `review_queue.py outcome`; the card then shows the queue the server re-read.
+  const record = useMutation({
+    mutationKey: careerKey(slug),
+    mutationFn: ({ app, outcome, version }: { app: Application; outcome: OutcomeChoice; version: string }) => setApplicationOutcome(slug, app.id, outcome, version),
+    onMutate: () => setNotice(null),
+    onSuccess: (r) => {
+      queryClient.setQueryData(['applications', slug], r.queue);
+      setNotice({ ok: true, text: r.message });
+    },
+    onError: (e: Error, { app, outcome }) => {
+      const body = e instanceof HubError ? e.body : {};
+      const current = e instanceof HubError && e.status === 409 ? ((body.current as ShownQueue | undefined) ?? null) : null;
+      setNotice({
+        ok: false,
+        text: current ? e.message : `Couldn't record ${OUTCOME_LABELS[outcome]} for ${app.company} · ${app.title}: ${e.message}`,
+        output: typeof body.output === 'string' && body.output ? body.output : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+      });
+      if (current) queryClient.setQueryData(['applications', slug], current);
+    },
+    // Read the file again either way: Career HQ rewrote it (or refused), and nothing retries.
+    onSettled: () => {
+      for (const key of ['applications', 'projects']) void queryClient.invalidateQueries({ queryKey: [key] });
+    },
+  });
+
   const launch = useCareerLaunch(slug, setNotice);
   const busy = useCareerBusy(slug);
 
@@ -264,6 +387,11 @@ export function ApplicationsSection({ project, run }: SectionProps) {
           <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's status command…
         </p>
       )}
+      {record.isPending && (
+        <p className="inline-flex items-center gap-1.5 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300" role="status">
+          <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's outcome command…
+        </p>
+      )}
       {launch.isPending && (
         <p className="inline-flex items-center gap-1.5 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700 dark:bg-stone-900 dark:text-stone-300" role="status">
           <Loader2 size={14} className="animate-spin" aria-hidden /> Running Career HQ's {launch.variables ? WHAT[launch.variables.kind] : ''} command…
@@ -282,6 +410,7 @@ export function ApplicationsSection({ project, run }: SectionProps) {
           <h3 className="mb-1.5 text-xs font-medium tracking-wide text-stone-500 uppercase">
             {g.status === 'other' ? 'Unknown status' : g.status} ({g.items.length})
           </h3>
+          {g.status === 'submitted' && <OutcomeTableView items={g.items} />}
           <ul className="space-y-2">
             {g.items.map((app) => (
               <Card
@@ -292,7 +421,9 @@ export function ApplicationsSection({ project, run }: SectionProps) {
                 run={run}
                 busy={busy}
                 launching={launch.isPending && launch.variables?.id === app.id ? launch.variables.kind : null}
+                recording={record.isPending && record.variables?.app.id === app.id ? record.variables.outcome : null}
                 onStatus={(status) => change.mutate({ app, status, version: q.version })}
+                onOutcome={(outcome) => record.mutate({ app, outcome, version: q.version })}
                 onLaunch={(kind) => launch.mutate({ kind, id: app.id, label: `${app.company} · ${app.title}` })}
                 onOpen={() => setShowing(app)}
               />

@@ -1,6 +1,7 @@
 // Running Career HQ's own commands in the repo that holds the queue:
 //   uv run python scripts/review_queue.py status <id> <status>
 //   uv run python scripts/review_queue.py approve-draft <id> <question-number> <draft-sha256>
+//   uv run python scripts/review_queue.py outcome <id> <no_response|rejected|interview|offer|pending>
 //   uv run python scripts/review_queue.py open-letter <id>       (opens cover_letter.docx in Word)
 //   uv run python scripts/review_queue.py open-resume <id>       (opens resume.docx in Word)
 //   uv run python scripts/resume_state.py pdf <id>               (Word saves resume.pdf from your edited resume.docx)
@@ -24,7 +25,7 @@ import { FeedError, feedRoot, findFeedFiles, POSTING_ID, readFeed } from './job-
 import type { Project } from './db/schema.ts';
 import { shellQuote } from './launcher.ts';
 import { createPdfChecker, type PdfCheck, type PdfChecker } from './pdf-check.ts';
-import { APP_STATUSES, httpsLinkProblem, postingTextProblem, utf8Bytes } from './queue-rules.ts';
+import { APP_STATUSES, httpsLinkProblem, OUTCOME_CHOICES, postingTextProblem, utf8Bytes } from './queue-rules.ts';
 
 export const QUEUE_SCRIPT = 'scripts/review_queue.py';
 export const RESUME_SCRIPT = 'scripts/resume_state.py';
@@ -33,6 +34,8 @@ export const APP_ID = /^\d{4}-\d{2}-\d{2}(-[a-z0-9]+)+$/;
 const TIMEOUT_MS = 60_000;
 /** Career HQ's doc for the launch buttons allows 90 s (they return within a few). */
 const LAUNCH_TIMEOUT_MS = 90_000;
+/** Career HQ's doc for the outcome buttons allows 30 s. */
+const OUTCOME_TIMEOUT_MS = 30_000;
 /** Word's PDF export (Career HQ allows it 60 s, plus a 30 s check and opening Word). */
 const PDF_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT = 64 * 1024;
@@ -61,6 +64,20 @@ export const approveDraftSchema = z.object({
 export type ApproveDraftRequest = z.infer<typeof approveDraftSchema>;
 
 const packetId = z.string().max(200).regex(APP_ID, 'must look like YYYY-MM-DD-company-title');
+/**
+ * Outcome buttons: what happened after submitting, or `pending` to clear it
+ * (Career HQ's docs/project_hub_outcome_buttons.md). Only for a packet the
+ * queue shows as submitted, and only if the queue is the version the page loaded.
+ */
+export const queueOutcomeSchema = z.object({
+  kind: z.literal('queue-outcome'),
+  slug: z.string().min(1),
+  id: packetId,
+  outcome: z.enum(OUTCOME_CHOICES),
+  version: z.string().regex(/^[0-9a-f]{64}$/, 'must be the queue version the page loaded'),
+  dryRun: z.boolean().optional(),
+});
+export type QueueOutcomeRequest = z.infer<typeof queueOutcomeSchema>;
 /** "Open letter in Word": the packet's cover_letter.docx. */
 export const openLetterSchema = z.object({ kind: z.literal('open-letter'), slug: z.string().min(1), id: packetId, dryRun: z.boolean().optional() });
 /** "Fill application": only for a packet the queue shows as reviewed. */
@@ -96,7 +113,7 @@ export type LaunchApplyRequest = z.infer<typeof launchApplySchema>;
 export type LaunchBuildRequest = z.infer<typeof launchBuildSchema>;
 
 /** Every Career HQ command the page can run, by launch kind. */
-export const CAREER_KINDS = ['queue-status', 'approve-draft', 'open-letter', 'open-resume', 'resume-pdf', 'launch-apply', 'launch-build', 'launch-manual'] as const;
+export const CAREER_KINDS = ['queue-status', 'queue-outcome', 'approve-draft', 'open-letter', 'open-resume', 'resume-pdf', 'launch-apply', 'launch-build', 'launch-manual'] as const;
 
 export type QueueStatusDeps = {
   project: (slug: string) => Project | undefined;
@@ -275,13 +292,17 @@ function queueNow(p: Project) {
   }
 }
 
+/** The queue changed since the page loaded it: nothing runs, and the page gets the current queue (with `others` and limits, as it shows it). */
+const staleQueue = (f: Found): QueueStatusResult => ({
+  status: 409,
+  body: { error: 'The review queue changed since this page loaded it, so nothing was run. This is the current version.', current: queueNow(f.p) ?? { ...f.queue, others: [] } },
+});
+
 /** Changes a status if the queue is still the version the page loaded, and confirms the queue shows it. */
 export async function changeQueueStatus(req: QueueStatusRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
   const f = find(req.slug, req.id, deps);
   if ('status' in f && 'body' in f) return f;
-  if (f.queue.version !== req.version) {
-    return { status: 409, body: { error: 'The review queue changed since this page loaded it, so nothing was run. This is the current version.', current: f.queue } };
-  }
+  if (f.queue.version !== req.version) return staleQueue(f);
   return runInRepo(f, ['status', req.id, req.status], 'status', req.dryRun, deps, (run, command) => {
     const now = queueNow(f.p);
     const shown = now?.items.find((i) => i.id === req.id)?.status;
@@ -317,6 +338,37 @@ export async function approveDraft(req: ApproveDraftRequest, deps: QueueStatusDe
 
 /** Career HQ's one-line answer (the last line it printed), or a fallback. */
 const lastLine = (stdout: string, fallback: string) => stdout.trim().split('\n').filter(Boolean).at(-1) ?? fallback;
+
+/**
+ * Records an outcome on a submitted application (or clears it with `pending`)
+ * by running Career HQ's `review_queue.py outcome`, which rewrites meta.yaml
+ * and the queue. Success needs exit 0 and the re-read queue showing it.
+ */
+export async function setQueueOutcome(req: QueueOutcomeRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {
+  const f = find(req.slug, req.id, deps);
+  if ('status' in f && 'body' in f) return f;
+  if (f.queue.version !== req.version) return staleQueue(f);
+  if (f.item.status !== 'submitted') {
+    return { status: 409, body: { error: `${req.id} is "${f.item.status}"; only submitted applications take an outcome` } };
+  }
+  return runInRepo(
+    f,
+    ['outcome', req.id, req.outcome],
+    'outcome',
+    req.dryRun,
+    deps,
+    (run, command) => {
+      const now = queueNow(f.p);
+      const item = now?.items.find((i) => i.id === req.id);
+      const want = req.outcome === 'pending' ? null : req.outcome;
+      if (!item || item.outcome !== want) {
+        return { status: 500, body: { error: `The command finished, but the queue ${item ? `shows "${item.outcome ?? 'pending'}"` : "couldn't be read afterwards"}`, output: run.output, command } };
+      }
+      return { status: 200, body: { ok: true, command, message: lastLine(run.stdout, 'Outcome saved.'), output: run.output, queue: now } };
+    },
+    { timeoutMs: OUTCOME_TIMEOUT_MS },
+  );
+}
 
 /** "Open letter in Word": Career HQ opens <packet>/cover_letter.docx in Microsoft Word and changes no file. */
 export async function openLetter(req: OpenLetterRequest, deps: QueueStatusDeps): Promise<QueueStatusResult> {

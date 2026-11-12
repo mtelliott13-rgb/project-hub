@@ -9,9 +9,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { APP_STATUSES, FITS, limitFlags, type AppStatus, type LimitFlags } from './queue-rules.ts';
+import { APP_STATUSES, FITS, limitFlags, OUTCOMES, type AppStatus, type LimitFlags } from './queue-rules.ts';
 
-export { APP_STATUSES, FITS, limitFlags, queueSummary, sortApplications, type AppStatus, type LimitFlags } from './queue-rules.ts';
+export { APP_STATUSES, FITS, limitFlags, OUTCOMES, queueSummary, sortApplications, type AppStatus, type LimitFlags } from './queue-rules.ts';
 
 /** Where Career HQ writes the queue, relative to its repo: the current place first, then the older one. */
 export const QUEUE_FILES = ['jobs/queue.yaml', 'jobs/queue/review_queue.yaml'] as const;
@@ -47,8 +47,14 @@ export type Application = {
   /** As written; `statusKnown` false means it isn't draft/reviewed/submitted (shown and flagged). */
   status: string;
   statusKnown: boolean;
+  /** Career HQ's fit check tag (strong | reach | long_shot), as written; `fitKnown` false flags anything else. */
   fit: string | null;
   fitKnown: boolean;
+  /** What happened after submitting (no_response | rejected | interview | offer), as written; null means pending. */
+  outcome: string | null;
+  outcomeKnown: boolean;
+  /** When the outcome was recorded (YYYY-MM-DD). */
+  outcomeOn: string | null;
   location: string | null;
   /** Only http/https links. */
   url: string | null;
@@ -180,6 +186,10 @@ export function parseQueue(text: string, file: string): Queue {
     const fit = str(it.fit);
     const fitKnown = !fit || (FITS as readonly string[]).includes(fit);
     if (!fitKnown) issues.push(`unknown fit "${fit}"`);
+    const outcome = str(it.outcome);
+    const outcomeKnown = !outcome || (OUTCOMES as readonly string[]).includes(outcome);
+    if (!outcomeKnown) issues.push(`unknown outcome "${outcome}"`);
+    if (outcome && status !== 'submitted') issues.push(`has an outcome but isn't submitted`);
     if (str(it.url) && !httpUrl(str(it.url))) issues.push('url is not an http(s) link');
     const letter = str(it.letter);
     if (letter && !(LETTER_STATES as readonly string[]).includes(letter)) issues.push(`unknown letter state "${letter}"`);
@@ -196,6 +206,9 @@ export function parseQueue(text: string, file: string): Queue {
       statusKnown,
       fit,
       fitKnown,
+      outcome,
+      outcomeKnown,
+      outcomeOn: str(it.outcome_on),
       location: str(it.location),
       url: httpUrl(str(it.url)),
       added: str(it.added),

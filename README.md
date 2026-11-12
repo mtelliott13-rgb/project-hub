@@ -11,7 +11,7 @@ I left off.
 
 I use it every day on my own projects. The screenshot and `sample-data/` use made-up content so my job applications, chats and notes stay private.
 
-**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 238 tests, CI on every push.
+**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 246 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 `~/.project-hub/`. Project data stays on this Mac. What goes out:
@@ -49,9 +49,13 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 - **Applications**: works with Career HQ, my separate job-application tool. If
   a project holds its review queue, the page shows applications grouped
   draft → reviewed → submitted, fill sheets with copy buttons and character
-  limits, and a job feed. Every application goes through my review: a status
-  changes only when I pick it, a shortened answer is used only after I approve
-  it, and each button runs one of Career HQ's own scripts on my click. The hub
+  limits, a job feed, and Career HQ's fit tags (Strong fit, Reach, Long shot).
+  Submitted applications get outcome buttons (no response, rejected,
+  interview, offer), and a small table shows outcomes by fit tag, so I can
+  see whether the tags predict which applications get a response. Every
+  application goes through my review: a status changes only when I pick it, a
+  shortened answer is used only after I approve it, and each button runs one of
+  Career HQ's own scripts on my click. The hub
   never edits Career HQ's files itself. "Fill application" starts Career HQ's
   form-filling session, which by Career HQ's rules stops before submit. I
   submit myself.

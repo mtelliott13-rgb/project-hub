@@ -1,13 +1,13 @@
 // Applications: Career HQ's review queue, fill sheets (JSON and Markdown), the
-// status command and PDF launches.
+// status and outcome commands, and PDF launches.
 // All data here is made up; no real queue or fill sheet is used.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findQueueFiles, limitFlags, packetDir, parseFillSheet, parseFillSheetJson, parseQueue, QUEUE_FILES, queueRoot, queueSummary, readFillSheet, readQueue, sortApplications } from '../src/server/applications.ts';
-import { httpsLinkProblem, limitSummary, manualJobInput, postingTextProblem, sha256Hex } from '../src/server/queue-rules.ts';
-import { approveDraft, changeQueueStatus, copyCommand, hubPdfChecker, launchBuild, launchManual, resumePdf } from '../src/server/queue-status.ts';
+import { fitLabel, httpsLinkProblem, limitSummary, manualJobInput, outcomeTable, postingTextProblem, sha256Hex } from '../src/server/queue-rules.ts';
+import { approveDraft, changeQueueStatus, copyCommand, hubPdfChecker, launchBuild, launchManual, resumePdf, setQueueOutcome } from '../src/server/queue-status.ts';
 import { parseFeed } from '../src/server/job-feed.ts';
 import { createApp } from '../src/server/app.ts';
 import { watchFile } from '../src/server/project-store.ts';
@@ -33,7 +33,7 @@ items:
     company: "Acme Energy"
     title: "Data Analyst Intern"
     status: "draft"
-    fit: "possible"
+    fit: "reach"
     location: "Denver, CO"
     url: "https://example.com/jobs/123"
     added: "2026-11-03"
@@ -118,7 +118,7 @@ describe('reading the queue', () => {
     expect(queueSummary(q.counts)).toBe('1 draft · 1 reviewed · 1 submitted');
     expect(queueSummary({ draft: 2, reviewed: 1, submitted: 3 })).toBe('2 drafts · 1 reviewed · 3 submitted');
     const [acme, globex, initech] = q.items;
-    expect(acme).toMatchObject({ company: 'Acme Energy', fit: 'possible', fitKnown: true, url: 'https://example.com/jobs/123', deadline: '2026-12-01', notes: null, problems: [] });
+    expect(acme).toMatchObject({ company: 'Acme Energy', fit: 'reach', fitKnown: true, outcome: null, outcomeKnown: true, outcomeOn: null, url: 'https://example.com/jobs/123', deadline: '2026-12-01', notes: null, problems: [] });
     expect(acme.files).toEqual({ resume: true, resumeDocx: false, coverLetter: true, coverLetterDocx: false, fillSheet: true });
     // Globex's resume.pdf is a link out of the repo: not offered.
     expect(globex.files).toEqual({ resume: false, resumeDocx: false, coverLetter: false, coverLetterDocx: false, fillSheet: false });
@@ -210,10 +210,12 @@ case $(cat "$d/mode") in
   manual) cat > "$d/stdin"; echo "opened Claude Code in Terminal running /build-packet \${6:-inbox/manual-20261110-120000-0a1b2c3d.txt}";;
   manual-dup) cat > /dev/null; echo "error: that link already has a packet: 2026-11-03-acme-energy-data-analyst-intern" >&2; exit 1;;
   pdf-fail) echo "error: Word couldn't export the PDF: the resume is still open in Word" >&2; exit 1;;
+  outcome) cp "$d/after.yaml" jobs/queue.yaml; echo "$5: outcome pending -> $6";;
+  outcome-refuse) echo "error: $5 is 'draft'; only submitted packets take an outcome" >&2; exit 2;;
 esac
 `;
 
-type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse' | 'launch' | 'dup' | 'pdf' | 'pdf-stale' | 'pdf-fail' | 'manual' | 'manual-dup';
+type FakeMode = 'ok' | 'fail' | 'noop' | 'slow' | 'approve' | 'refuse' | 'launch' | 'dup' | 'pdf' | 'pdf-stale' | 'pdf-fail' | 'manual' | 'manual-dup' | 'outcome' | 'outcome-refuse';
 function fakeUv(root: string, mode: FakeMode, after?: string) {
   const bin = path.join(root, 'fake-bin');
   fs.mkdirSync(bin, { recursive: true });
@@ -544,6 +546,118 @@ describe("status changes run Career HQ's command", () => {
     expect(copyCommand('/Users/me/career-hq', ['status', ID, 'submitted'], '/Users/me')).toBe(`cd ~/career-hq && uv run python scripts/review_queue.py status ${ID} submitted`);
     expect(copyCommand('/Users/me/My Career', ['status', ID, 'draft'], '/Users/me')).toBe(`cd ~/'My Career' && uv run python scripts/review_queue.py status ${ID} draft`);
     expect(copyCommand('/opt/career', ['status', ID, 'draft'], '/Users/me')).toBe(`cd /opt/career && uv run python scripts/review_queue.py status ${ID} draft`);
+  });
+});
+
+describe('fit tags and outcomes', () => {
+  const GLOBEX = '2026-10-28-globex-ops-analyst';
+  const WITH_OUTCOME = QUEUE.replace('submitted_on: "2026-10-30"', 'submitted_on: "2026-10-30"\n    outcome: "interview"\n    outcome_on: "2026-11-12"');
+  const body = (version: string, extra: object = {}) => ({ kind: 'queue-outcome', slug: 'career', id: GLOBEX, outcome: 'interview', version, ...extra });
+  const version = async (call: ReturnType<typeof setup>['call']) => (await call('GET', '/api/projects/career/applications')).body.version as string;
+  const globexIn = (queue: { items: { id: string; outcome: string | null; outcomeOn: string | null }[] }) => queue.items.find((i) => i.id === GLOBEX);
+
+  it('reads fit tags and outcomes; old tags, unknown outcomes and an outcome on an unsubmitted item are flagged, not dropped', () => {
+    const q = parseQueue(
+      WITH_OUTCOME.replace('fit: "reach"', 'fit: "possible"').replace('status: "draft"', 'status: "draft"\n    outcome: "rejected"').replace('fit: "great"   # not a verdict', 'fit: "long_shot"\n    outcome: "ghosted"'),
+      '/x/career/jobs/queue.yaml',
+    );
+    const [acme, globex, initech] = q.items;
+    expect(globex).toMatchObject({ fit: 'strong', fitKnown: true, outcome: 'interview', outcomeKnown: true, outcomeOn: '2026-11-12' });
+    expect(acme).toMatchObject({ fit: 'possible', fitKnown: false, outcome: 'rejected' });
+    expect(acme.problems).toEqual(expect.arrayContaining(['unknown fit "possible"', "has an outcome but isn't submitted"]));
+    expect(initech).toMatchObject({ fit: 'long_shot', fitKnown: true, outcome: 'ghosted', outcomeKnown: false });
+    expect(initech.problems).toEqual(expect.arrayContaining(['unknown outcome "ghosted"']));
+    expect([fitLabel('strong'), fitLabel('reach'), fitLabel('long_shot'), fitLabel('stretch')]).toEqual(['Strong fit', 'Reach', 'Long shot', 'stretch']);
+  });
+
+  it('the outcome table counts submitted items by tag and outcome, like Career HQ\'s outcomes command', () => {
+    const it_ = (status: string, fit: string | null, outcome: string | null) => ({ status, fit, outcome });
+    const t = outcomeTable([
+      it_('submitted', 'strong', 'interview'),
+      it_('submitted', 'strong', null),
+      it_('submitted', 'reach', 'rejected'),
+      it_('submitted', 'reach', 'no_response'),
+      it_('submitted', 'possible', 'offer'), // an old tag counts as no tag
+      it_('submitted', 'long_shot', 'ghosted'), // unknown outcome: counted apart
+      it_('submitted', 'long_shot', 'pending'), // "pending" written out isn't an outcome either
+      it_('draft', 'strong', null), // not submitted: left out
+      it_('reviewed', 'reach', 'interview'),
+    ]);
+    const row = (fit: string | null) => t.rows.find((r) => r.fit === fit);
+    expect(t.rows.map((r) => r.fit)).toEqual(['strong', 'reach', 'long_shot', null]);
+    expect(row('strong')).toEqual({ fit: 'strong', counts: { no_response: 0, rejected: 0, interview: 1, offer: 0, pending: 1 }, total: 2 });
+    expect(row('reach')!.counts).toMatchObject({ rejected: 1, no_response: 1 });
+    expect(row('long_shot')!.total).toBe(0);
+    expect(row(null)).toMatchObject({ counts: { offer: 1 }, total: 1 });
+    expect(t).toMatchObject({ total: 5, unknown: 2 });
+    // The "no tag" row only appears when it has something.
+    expect(outcomeTable([it_('submitted', 'reach', null)]).rows.map((r) => r.fit)).toEqual(['strong', 'reach', 'long_shot']);
+  });
+
+  it('dryRun shows the exact command; nothing runs', async () => {
+    const { call, career, fake } = setup({ mode: 'outcome', after: WITH_OUTCOME });
+    const res = await call('POST', '/api/launch', body(await version(call), { dryRun: true }));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ dryRun: true, cwd: career, argv: [fake!.uv, 'run', 'python', 'scripts/review_queue.py', 'outcome', GLOBEX, 'interview'] });
+    expect(res.body.command).toBe(`cd ~/career && uv run python scripts/review_queue.py outcome ${GLOBEX} interview`);
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it("records it with only those arguments, shows Career HQ's line and returns the re-read queue", async () => {
+    const { call, career, fake } = setup({ mode: 'outcome', after: WITH_OUTCOME });
+    const res = await call('POST', '/api/launch', body(await version(call)));
+    expect(res.status).toBe(200);
+    expect(res.cache).toBe('no-store');
+    expect(fake!.args()).toEqual([career, 'run', 'python', 'scripts/review_queue.py', 'outcome', GLOBEX, 'interview']);
+    expect(res.body.message).toBe(`${GLOBEX}: outcome pending -> interview`);
+    expect(globexIn(res.body.queue)).toMatchObject({ outcome: 'interview', outcomeOn: '2026-11-12' });
+    expect(res.body.queue.others).toEqual([]);
+  });
+
+  it('Pending clears it: success needs the re-read queue to show no outcome', async () => {
+    const s = setup({ mode: 'outcome', after: QUEUE });
+    fs.writeFileSync(s.file, WITH_OUTCOME);
+    const res = await s.call('POST', '/api/launch', body(await version(s.call), { outcome: 'pending' }));
+    expect(res.status).toBe(200);
+    expect(s.fake!.args().slice(-2)).toEqual([GLOBEX, 'pending']);
+    expect(globexIn(res.body.queue)).toMatchObject({ outcome: null, outcomeOn: null });
+  });
+
+  it("Career HQ's refusal and a run that changes nothing show the error and the command to copy", async () => {
+    const refused = setup({ mode: 'outcome-refuse' });
+    const res = await refused.call('POST', '/api/launch', body(await version(refused.call)));
+    expect(res.status).toBe(500);
+    expect(res.body).toMatchObject({ error: `error: ${GLOBEX} is 'draft'; only submitted packets take an outcome (exit 2)`, command: `cd ~/career && uv run python scripts/review_queue.py outcome ${GLOBEX} interview` });
+    const noop = setup({ mode: 'noop' });
+    const res2 = await noop.call('POST', '/api/launch', body(await version(noop.call)));
+    expect(res2.status).toBe(500);
+    expect(res2.body).toMatchObject({ error: 'The command finished, but the queue shows "pending"', output: 'nothing to do' });
+  });
+
+  it('refuses before running: not submitted, a bad outcome or id, a stale page, another project, no token', async () => {
+    const { call, fake } = setup({ mode: 'outcome', after: WITH_OUTCOME });
+    const v = await version(call);
+    const post = (b: object) => call('POST', '/api/launch', b);
+    const draft = await post(body(v, { id: '2026-11-03-acme-energy-data-analyst-intern' }));
+    expect(draft).toMatchObject({ status: 409, body: { error: '2026-11-03-acme-energy-data-analyst-intern is "draft"; only submitted applications take an outcome' } });
+    for (const outcome of ['ghosted', 'Interview', 'pending ', '', 'interview; rm -rf ~']) expect((await post(body(v, { outcome }))).status).toBe(400);
+    for (const id of ['x; rm -rf ~', '--help', `${GLOBEX}\n`]) expect((await post(body(v, { id }))).status).toBe(400);
+    expect((await post(body(v, { id: '2026-01-01-not-listed' }))).status).toBe(404);
+    const stale = await post(body('0'.repeat(64)));
+    expect(stale.status).toBe(409);
+    expect(stale.body.current).toMatchObject({ counts: { draft: 1, reviewed: 1, submitted: 1 }, others: [] });
+    expect((await post({ ...body(v), slug: 'other' })).status).toBe(404);
+    expect((await call('POST', '/api/launch', body(v), { 'Content-Type': 'application/json', 'X-Hub-Token': 'ui-t0ken' })).status).toBe(403);
+    expect(fake!.ran()).toBe(false);
+  });
+
+  it('shares the one-command-per-project lock with the other Career HQ buttons', async () => {
+    const { fake, root } = setup({ mode: 'outcome', after: WITH_OUTCOME });
+    const p = { slug: 'career', repos: [path.join(root, 'career')], folders: [] } as never;
+    const v = readQueue(path.join(root, 'career/jobs/queue.yaml')).version;
+    const busy = await setQueueOutcome({ kind: 'queue-outcome', slug: 'career', id: GLOBEX, outcome: 'offer', version: v }, { project: () => p, uvPath: fake!.uv, home: root, running: new Set(['career']) });
+    expect(busy).toMatchObject({ status: 409, body: { error: expect.stringMatching(/already running/) } });
+    expect(fake!.ran()).toBe(false);
   });
 });
 
