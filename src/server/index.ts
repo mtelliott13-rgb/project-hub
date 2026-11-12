@@ -18,6 +18,7 @@ import {
   PORT,
   PROJECT_DOCS_DIR,
   PROJECTS_FILE,
+  SKIP_CLAUDE,
   TOKEN_FILE,
   UI_TOKEN_FILE,
   AGENT_TOKEN_FILE,
@@ -194,10 +195,12 @@ const app = createApp({
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
-  refreshFromSdk().catch(logError('Session backfill'));
-  refreshRunning().catch(logError('claude agents'));
-  setInterval(() => refreshFromSdk().catch(logError('Title refresh')), TITLE_REFRESH_MS);
-  setInterval(() => refreshRunning().catch(logError('claude agents')), AGENTS_POLL_MS);
+  if (!SKIP_CLAUDE) {
+    refreshFromSdk().catch(logError('Session backfill'));
+    refreshRunning().catch(logError('claude agents'));
+    setInterval(() => refreshFromSdk().catch(logError('Title refresh')), TITLE_REFRESH_MS);
+    setInterval(() => refreshRunning().catch(logError('claude agents')), AGENTS_POLL_MS);
+  }
   repos.refreshAll().catch(logError('Repo check'));
   // A project folder created after projects.yaml named it starts being watched within a minute.
   setInterval(files.sync, 60_000);

@@ -10,6 +10,7 @@
     "dev": "concurrently -k -n server,web \"PROJECT_HUB_DEV_ORIGIN=http://127.0.0.1:5173 node --watch src/server/index.ts\" \"vite\"",
     "build": "vite build",
     "start": "node src/server/index.ts",
+    "sample": "node scripts/sample.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",

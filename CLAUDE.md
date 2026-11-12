@@ -11,7 +11,7 @@ Rules:
 
 - macOS (Apple Silicon), terminal app: **Terminal.app**, editor: **VS Code**. The Phase 2 launcher targets these.
 - No Homebrew. Node.js 22 lives in `~/.local/node` (on PATH via `~/.zshrc`); pnpm comes from corepack. Install nothing that needs an admin password.
-- `gh` 2.102.0 lives in `~/.local/gh` (linked from `~/.local/bin/gh`), signed in as mtelliott13-rgb. career-hq, demo-dashboard and project-hub are private repos there (pushed 2026-10-21); each repo's git config has a repo-local credential helper that calls `gh auth git-credential`. meme-radar has no remote yet.
+- `gh` lives in `~/.local/gh` (linked from `~/.local/bin/gh`), also installed without Homebrew.
 
 ## Layout
 

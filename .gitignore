@@ -17,3 +17,15 @@ logs/
 .claude/*.local.json
 # The source plan; SPEC.md holds its content.
 *.pdf
+
+# `pnpm sample` writes these into sample-data/ (PROJECT_HUB_DIR); only the
+# hand-written sample files are committed.
+sample-data/projects.yaml
+sample-data/token
+sample-data/ui-token
+sample-data/agent-token
+sample-data/hub-hook.sh
+sample-data/launch/
+sample-data/backups/
+sample-data/logs/
+sample-data/projects/*/monetize/

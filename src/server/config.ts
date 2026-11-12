@@ -13,6 +13,9 @@ export const LOG_DIR = path.join(HUB_DIR, 'logs');
 export const TOKEN_FILE = path.join(HUB_DIR, 'token');
 export const HOOK_SCRIPT = path.join(HUB_DIR, 'hub-hook.sh');
 export const BACKUP_DIR = path.join(HUB_DIR, 'backups');
+// PROJECT_HUB_SKIP_CLAUDE=1 (set by `pnpm sample`) stops the hub reading this
+// Mac's Claude Code sessions, so a sample run shows only the sample data.
+export const SKIP_CLAUDE = process.env.PROJECT_HUB_SKIP_CLAUDE === '1';
 
 // Bound to loopback only, so the hub is reachable only from this machine.
 export const HOST = '127.0.0.1';

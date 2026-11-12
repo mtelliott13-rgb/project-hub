@@ -41,7 +41,7 @@ projects:
   - slug: crypto-analysis
     name: Crypto Analysis
     folders: [~/Documents/trading-bot]
-    sessions: [ac83a803-cbdd-4453-add4-c7e80f0e4bc3]
+    sessions: [00000000-0000-4000-8000-000000000001]
 `;
 
 const input = (over: Partial<ProjectInput> = {}): ProjectInput => ({
@@ -88,7 +88,7 @@ describe('projects.yaml edits', () => {
     // Emptying a list removes the key rather than writing [].
     const crypto = updateProject(FILE, 'crypto-analysis', input({ name: 'Crypto Analysis' }));
     const [, entry] = crypto.split('  - slug: crypto-analysis\n');
-    expect(entry).toBe('    name: Crypto Analysis\n    sessions: [ac83a803-cbdd-4453-add4-c7e80f0e4bc3]\n');
+    expect(entry).toBe('    name: Crypto Analysis\n    sessions: [00000000-0000-4000-8000-000000000001]\n');
   });
 
   it('archives and unarchives with an archived: true line', () => {
@@ -231,7 +231,7 @@ describe('project store and API', () => {
     dirs.push(notes);
     fs.writeFileSync(path.join(notes, 'keep.md'), 'mine');
     db.insert(sessions)
-      .values({ id: 'ac83a803-cbdd-4453-add4-c7e80f0e4bc3', projectSlug: null, cwd: notes, state: 'ended', lastActiveAt: new Date() })
+      .values({ id: '00000000-0000-4000-8000-000000000001', projectSlug: null, cwd: notes, state: 'ended', lastActiveAt: new Date() })
       .run();
     store.reload();
     expect(db.select().from(sessions).get()?.projectSlug).toBe('crypto-analysis'); // pinned

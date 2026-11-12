@@ -1,0 +1,48 @@
+{
+  "format": "career-hq fill sheet",
+  "version": 1,
+  "id": "2026-11-03-example-energy-data-analyst-intern",
+  "company": "Example Energy",
+  "title": "Data Analyst Intern",
+  "generated": "2026-11-03",
+  "missing_marker": "[not in profile]",
+  "sections": [
+    {
+      "heading": "1. Personal info",
+      "notes": [],
+      "fields": [
+        {"label": "First name", "value": "Alex"},
+        {"label": "Last name", "value": "Sample"},
+        {"label": "Email", "value": "alex.sample@example.com"},
+        {"label": "Phone", "value": "555-010-0000"},
+        {"label": "Street address", "value": "[not in profile]"},
+        {"label": "City", "value": "Denver"}
+      ]
+    },
+    {
+      "heading": "2. Education",
+      "notes": [],
+      "fields": [
+        {"label": "School", "value": "Example State University", "group": "Example State University"},
+        {"label": "Major", "value": "Environmental Studies", "group": "Example State University"},
+        {"label": "Expected graduation", "value": "05/2027", "group": "Example State University"}
+      ]
+    },
+    {
+      "heading": "3. Job-specific questions",
+      "notes": [],
+      "fields": [
+        {"label": "Why Example Energy?", "value": "Example Energy works on grid data, which is where my studies and my analysis projects meet.", "chars": 91, "max_chars": 300},
+        {"label": "Tell us about a project you led.", "value": "I led a four-person class project that mapped tree cover across our campus from public satellite images and presented the results to the facilities team.", "chars": 153, "max_chars": 120, "over_limit": true, "shorter_draft": {"question": 2, "value": "I led a four-person class project mapping campus tree cover from satellite images, presented to facilities.", "chars": 107, "status": "pending approval"}}
+      ]
+    },
+    {
+      "heading": "4. Answer yourself (left blank on purpose)",
+      "notes": [
+        {"group": null, "text": "Salary expectations"},
+        {"group": null, "text": "Demographic / EEO questions"}
+      ],
+      "fields": []
+    }
+  ]
+}

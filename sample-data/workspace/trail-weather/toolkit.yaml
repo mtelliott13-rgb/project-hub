@@ -1,0 +1,49 @@
+# Sample toolkit checklist (made up). Format: CLAUDE.md, "Toolkit checklist".
+items:
+  - name: Pick a hosting service
+    category: Infrastructure
+    url: https://example.com/hosting
+    cost: Free tier
+    why: The forecast page needs a public URL to share.
+    hours: 1
+    priority: high
+    priority_why: Blocks sharing with testers.
+    status: in progress
+
+  - name: Uptime monitor
+    category: Monitoring
+    url: https://example.com/uptime
+    cost: Free
+    why: Know when the forecast API stops answering.
+    hours: 0.5
+    priority: medium
+    status: not started
+
+  - name: Error tracking
+    category: Monitoring
+    url: https://example.com/errors
+    cost: Free tier
+    why: See crashes on testers' phones.
+    hours: 2
+    time_note: includes source maps
+    priority: medium
+    target: 2026-11-01
+    status: not started
+
+  - name: Analytics
+    category: Product
+    url: https://example.com/analytics
+    cost: $9/month
+    why: Which trailheads people look up most.
+    hours: ongoing
+    priority: low
+    status: parked
+
+  - name: Custom domain
+    category: Infrastructure
+    url: https://example.com/domains
+    cost: $12/year
+    why: Easier to remember than the host's default URL.
+    hours: 0.25
+    priority: low
+    status: done

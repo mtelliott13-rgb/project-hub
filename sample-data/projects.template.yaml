@@ -1,0 +1,25 @@
+# Sample projects for `pnpm sample`. Everything here is made up.
+# `pnpm sample` copies this to projects.yaml (gitignored) with {{SAMPLE}}
+# replaced by this folder's absolute path, then runs the hub against it.
+projects:
+  - slug: trail-weather
+    name: Trail Weather
+    folders: [{{SAMPLE}}/workspace/trail-weather]
+    keywords: [trail weather, forecast]
+
+  - slug: recipe-box
+    name: Recipe Box
+    folders: [{{SAMPLE}}/workspace/recipe-box]
+    keywords: [recipe]
+
+  - slug: job-search
+    name: Job Search
+    # Holds a review queue in Career HQ's format, so the Applications and
+    # Job feed sections show.
+    folders: [{{SAMPLE}}/workspace/job-search]
+    keywords: [job search, application]
+
+  - slug: old-blog
+    name: Old Blog
+    folders: [{{SAMPLE}}/workspace/old-blog]
+    archived: true
