@@ -269,6 +269,10 @@ export function CollapsibleSection({
   headingLevel?: 2 | 3;
 } & Record<`data-${string}`, string | undefined>) {
   const [open, setOpen] = useStoredFlag(`project-hub:open:${scope}:${id}`, defaultOpen);
+  // Once opened, the body stays mounted (just hidden), so text being edited
+  // inside (notes, drafts) keeps its state when the section is closed.
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent<{ scope: string; open: boolean }>).detail;
@@ -300,7 +304,7 @@ export function CollapsibleSection({
   );
   const body = (
     <div id={bodyId} hidden={!open} className={framed ? 'border-t border-line px-4 pt-3 pb-4' : 'pt-2'}>
-      {open && children}
+      {opened && children}
     </div>
   );
   if (!framed)

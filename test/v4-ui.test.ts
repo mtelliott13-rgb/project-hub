@@ -138,6 +138,8 @@ describe('activity chart data', () => {
 
   it('picks tidy axis steps', () => {
     expect(niceScale(0)).toEqual({ top: 4, step: 2 });
+    expect(niceScale(1)).toEqual({ top: 4, step: 2 });
+    expect(niceScale(3)).toEqual({ top: 4, step: 2 });
     expect(niceScale(5)).toEqual({ top: 6, step: 2 });
     expect(niceScale(7)).toEqual({ top: 8, step: 2 });
     expect(niceScale(17)).toEqual({ top: 20, step: 5 });

@@ -53,7 +53,7 @@ export function binDays(events: ActivityEvent[], days = 10, now = Date.now()): D
 /** A tidy axis top and step: 0/2/4/6 for small counts, 0/5/10/15… or 0/10/20… for bigger ones. */
 export function niceScale(max: number): { top: number; step: number } {
   if (max <= 0) return { top: 4, step: 2 };
-  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+  const steps = [2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
   const step = steps.find((s) => max / s <= 4) ?? Math.ceil(max / 4);
   return { top: Math.max(step * 2, Math.ceil(max / step) * step), step };
 }

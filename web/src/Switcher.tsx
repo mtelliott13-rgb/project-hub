@@ -10,7 +10,7 @@ import { fetchProjects } from './api.ts';
 import { runningCounts, runningLabel } from './colors.ts';
 import { newestPickUp } from './home/model.ts';
 import { openProject, resume, type Run } from './project/parts.tsx';
-import { useActivity } from './project/status.tsx';
+import { StatusBadges, useActivity } from './project/status.tsx';
 import { navigate } from './router.tsx';
 import { ago, Kbd, PingDot, ProjectChip } from './ui.tsx';
 
@@ -127,7 +127,9 @@ export function Switcher({ run, open, setOpen, onNewProject }: { run: Run; open:
                     {runningLabel(counts)}
                   </span>
                 )}
-                <span className="flex-1" />
+                <span className="min-w-0 flex-1 overflow-hidden">
+                  <StatusBadges project={p} activity={activity?.[p.slug]} omit={['running']} />
+                </span>
                 {last && <span className="shrink-0 font-mono text-tiny text-muted">{ago(last.at)}</span>}
                 <span className="hidden shrink-0 gap-1 group-data-[selected=true]:flex">
                   <Kbd>↵</Kbd>

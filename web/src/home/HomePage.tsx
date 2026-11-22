@@ -2,7 +2,7 @@
 // tiles, the project constellation with running-sessions and toolkit charts,
 // then the project cards in collapsible groups.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, CornerDownLeft, Play } from 'lucide-react';
+import { Archive, Check, CornerDownLeft, Play, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { describeEvent, sortProjects } from '../../../src/server/activity.ts';
 import { archiveProject, fetchProjects, type ProjectActivity, type ProjectDto } from '../api.ts';
@@ -229,8 +229,8 @@ function StatTiles({ stats }: { stats: HomeStats }) {
         detail={stats.total - stats.active ? `${stats.total - stats.active} quiet for 14+ days` : 'None gone quiet'}
         graphic={
           <div className="flex max-w-24 flex-wrap justify-end gap-1" role="img" aria-label={`${stats.active} of ${stats.total} active`}>
-            {Array.from({ length: stats.total }, (_, i) => (
-              <span key={i} className={`size-2.5 rounded-full ${i < stats.active ? 'bg-accent' : 'border border-control bg-track'}`} />
+            {stats.pips.map((pip) => (
+              <span key={pip.slug} title={`${pip.name}: ${pip.active ? 'active' : 'quiet'}`} className={`size-2.5 rounded-full ${pip.active ? 'bg-accent' : 'border border-control bg-track'}`} />
             ))}
           </div>
         }
@@ -247,8 +247,18 @@ function StatTiles({ stats }: { stats: HomeStats }) {
         testId="tile-needs"
         label="Needs a look"
         value={stats.needsCount}
-        detail={stats.needsCount ? 'Uncommitted work and quiet projects' : 'All clear'}
-        graphic={null}
+        detail={stats.needsCount ? `${stats.uncommittedRepos} repo${stats.uncommittedRepos === 1 ? '' : 's'} uncommitted · ${stats.quiet} quiet` : 'All clear'}
+        graphic={
+          stats.needsCount ? (
+            <span className="inline-flex size-10 items-center justify-center rounded-full bg-warn-bg text-warn" role="img" aria-label="Needs a look">
+              <TriangleAlert size={18} aria-hidden />
+            </span>
+          ) : (
+            <span className="inline-flex size-10 items-center justify-center rounded-full bg-live-bg text-live" role="img" aria-label="All clear">
+              <Check size={18} aria-hidden />
+            </span>
+          )
+        }
       >
         {stats.needs.length > 0 && (
           <ul className="mt-1 space-y-0.5 text-meta">

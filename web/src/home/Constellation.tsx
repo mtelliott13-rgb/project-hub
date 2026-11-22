@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { describeEvent } from '../../../src/server/activity.ts';
 import type { ProjectActivity, ProjectDto } from '../api.ts';
-import { initials, projectColor, runningCounts, runningLabel, slugAngle, spreadAngles } from '../colors.ts';
+import { initials, isIdle, projectColor, runningCounts, runningLabel, slugAngle, spreadAngles } from '../colors.ts';
 import { navigate } from '../router.tsx';
 import { ago, Card } from '../ui.tsx';
 import { daysSince, longAgo, tierOf, type Tier } from './model.ts';
@@ -30,22 +30,30 @@ function subLine(p: ProjectDto, tier: Tier, a: ProjectActivity | undefined): str
   return longAgo(a.last.at);
 }
 
-/** Where a node's label sits: on the side away from the centre. */
-function labelSpot(cos: number, sin: number, r: number) {
-  const side: 'start' | 'end' | 'middle' = cos > 0.25 ? 'start' : cos < -0.25 ? 'end' : 'middle';
-  const dx = side === 'start' ? r + 6 : side === 'end' ? -(r + 6) : 0;
-  const dy = side === 'middle' ? (sin > 0 ? r + 13 : -(r + 18)) : -1;
-  return { side, dx, dy };
+const LABEL_H = 28;
+const labelWidth = (n: Node) => Math.max(Math.min(n.p.name.length, 22) * 6.9, n.sub.length * 5.8) + 4;
+
+/**
+ * Where a node's label sits: on the side away from the centre. A label that
+ * would run off the left or right edge moves above or below its dot instead,
+ * pulled back inside the chart.
+ */
+function labelSpot(n: Node) {
+  const r = n.tier === 'running' ? 7 : 5.5;
+  const w = labelWidth(n);
+  let side: 'start' | 'end' | 'middle' = n.cos > 0.25 ? 'start' : n.cos < -0.25 ? 'end' : 'middle';
+  if ((side === 'start' && n.x + r + 6 + w > W - 4) || (side === 'end' && n.x - r - 6 - w < 4)) side = 'middle';
+  let x = side === 'start' ? n.x + r + 6 : side === 'end' ? n.x - r - 6 : n.x;
+  if (side === 'middle') x = Math.min(W - 4 - w / 2, Math.max(4 + w / 2, x));
+  const y = side === 'middle' ? n.y + (n.sin > 0 ? r + 13 : -(r + 18)) : n.y - 1;
+  return { side, x, y, w };
 }
 
 /** The label's rough box (name plus sub-line), for keeping labels apart. */
 function labelBox(n: Node) {
-  const r = n.tier === 'running' ? 7 : 5.5;
-  const { side, dx, dy } = labelSpot(n.cos, n.sin, r);
-  const w = Math.max(Math.min(n.p.name.length, 22) * 6.9, n.sub.length * 5.8) + 4;
-  const x0 = side === 'start' ? n.x + dx : side === 'end' ? n.x + dx - w : n.x - w / 2;
-  const y0 = n.y + dy - 11;
-  return { x0, x1: x0 + w, y0, y1: y0 + 28 };
+  const { side, x, y, w } = labelSpot(n);
+  const x0 = side === 'start' ? x : side === 'end' ? x - w : x - w / 2;
+  return { x0, x1: x0 + w, y0: y - 11, y1: y - 11 + LABEL_H };
 }
 
 function place(p: ProjectDto, tier: Tier, angle: number, sub: string): Node {
@@ -174,7 +182,9 @@ export function Constellation({ projects, activity }: { projects: ProjectDto[]; 
               const c = projectColor(n.p.slug);
               const dim = hover && hover !== n.p.slug ? 0.35 : 1;
               const r = n.tier === 'running' ? 7 : 5.5;
-              const { side, dx, dy } = labelSpot(n.cos, n.sin, r);
+              const label = labelSpot(n);
+              // All its running sessions idle: no ping, like the cards' status dot.
+              const allIdle = n.tier === 'running' && n.p.sessions.filter((x) => x.state === 'running').every((x) => isIdle(x));
               return (
                 <a
                   key={n.p.slug}
@@ -195,16 +205,16 @@ export function Constellation({ projects, activity }: { projects: ProjectDto[]; 
                 >
                   <circle cx={n.x} cy={n.y} r={r + 7} fill="none" stroke="var(--color-accent)" strokeWidth={2} className="ring opacity-0" />
                   <circle cx={n.x} cy={n.y} r={22} fill="transparent" />
-                  {n.tier === 'running' && <circle cx={n.x} cy={n.y} r={r} fill={c.base} className="hub-ping" opacity={0.5} />}
+                  {n.tier === 'running' && !allIdle && <circle cx={n.x} cy={n.y} r={r} fill={c.base} className="hub-ping" opacity={0.5} />}
                   {n.tier === 'quiet' ? (
                     <circle cx={n.x} cy={n.y} r={r} fill="var(--color-card)" stroke={c.base} strokeWidth={1.6} strokeDasharray="2.5 2" />
                   ) : (
                     <circle cx={n.x} cy={n.y} r={r} fill={c.base} stroke="var(--color-card)" strokeWidth={2} />
                   )}
-                  <text x={n.x + dx} y={n.y + dy} textAnchor={side} fontSize={12} fontWeight={600} fill="var(--color-ink)">
+                  <text x={label.x} y={label.y} textAnchor={label.side} fontSize={12} fontWeight={600} fill="var(--color-ink)">
                     {n.p.name.length > 22 ? `${n.p.name.slice(0, 21)}…` : n.p.name}
                   </text>
-                  <text x={n.x + dx} y={n.y + dy + 13} textAnchor={side} fontSize={10.5} fill="var(--color-muted)">
+                  <text x={label.x} y={label.y + 13} textAnchor={label.side} fontSize={10.5} fill="var(--color-muted)">
                     {n.sub}
                   </text>
                 </a>

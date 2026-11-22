@@ -37,6 +37,10 @@ export type HomeStats = {
   perProject: { slug: string; name: string; running: number; idle: number }[];
   active: number;
   total: number;
+  /** One per project, in home order: filled when active (not stale). */
+  pips: { slug: string; name: string; active: boolean }[];
+  uncommittedRepos: number;
+  quiet: number;
   toolkitDone: number;
   toolkitTotal: number;
   toolkits: { slug: string; name: string; done: number; total: number }[];
@@ -69,6 +73,9 @@ export function homeStats(projects: ProjectDto[], activity: Activity): HomeStats
     runningProjects: perProject.filter((x) => x.running > 0).length,
     perProject,
     active: projects.filter((p) => !activity?.[p.slug]?.stale).length,
+    pips: projects.map((p) => ({ slug: p.slug, name: p.name, active: !activity?.[p.slug]?.stale })),
+    uncommittedRepos: projects.reduce((n, p) => n + p.repoStatus.filter((r) => (r?.git?.uncommitted ?? 0) > 0).length, 0),
+    quiet: projects.filter((p) => activity?.[p.slug]?.stale).length,
     total: projects.length,
     toolkitDone: toolkits.reduce((n, t) => n + t.done, 0),
     toolkitTotal: toolkits.reduce((n, t) => n + t.total, 0),
