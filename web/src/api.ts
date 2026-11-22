@@ -9,6 +9,7 @@ import type { AppStatus, OutcomeChoice } from '../../src/server/queue-rules.ts';
 import type { Feed, Posting } from '../../src/server/job-feed.ts';
 import type { RepoStatus } from '../../src/server/repos.ts';
 import type { Toolkit, ToolkitStatus } from '../../src/server/toolkit.ts';
+import { assignProjectColors } from './colors.ts';
 
 // Dates arrive as ISO strings over JSON.
 type Jsonified<T> = { [K in keyof T]: T[K] extends Date ? string : T[K] extends Date | null ? string | null : T[K] };
@@ -58,7 +59,12 @@ export async function hub<T>(url: string, init: { method?: string; body?: unknow
   return json as T;
 }
 
-export const fetchProjects = () => hub<ProjectDto[]>('/api/projects');
+export const fetchProjects = () =>
+  hub<ProjectDto[]>('/api/projects').then((list) => {
+    // Colours are settled before any component renders the new list.
+    assignProjectColors(list);
+    return list;
+  });
 export const fetchFileError = () => hub<{ error: string | null }>('/api/projects-file');
 
 type Ok<T> = { ok: true; result: T };

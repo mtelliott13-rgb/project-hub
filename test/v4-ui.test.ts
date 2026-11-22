@@ -1,7 +1,7 @@
 // v4 redesign: the page's pure display rules (project colours, idle sessions,
 // constellation placement).
 import { describe, expect, it } from 'vitest';
-import { dayPart, idleDays, initials, isIdle, PROJECT_PALETTE, projectColor, runningCounts, runningLabel, sessionTag, slugAngle, spreadAngles } from '../web/src/colors.ts';
+import { assignProjectColors, dayPart, idleDays, initials, isIdle, PROJECT_PALETTE, projectColor, runningCounts, runningLabel, sessionTag, slugAngle, spreadAngles } from '../web/src/colors.ts';
 
 const NOW = Date.parse('2026-11-21T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
@@ -23,6 +23,22 @@ describe('projectColor', () => {
   it('uses several slots across slugs', () => {
     const used = new Set(Array.from({ length: 40 }, (_, i) => projectColor(`project-${i}`)));
     expect(used.size).toBeGreaterThan(4);
+  });
+});
+
+describe('assignProjectColors', () => {
+  it('gives colliding projects different slots, oldest keeps its own', () => {
+    const slugs = Array.from({ length: 8 }, (_, i) => `p${i}`);
+    assignProjectColors(slugs.map((slug, i) => ({ slug, createdAt: `2026-01-0${i + 1}` })));
+    expect(new Set(slugs.map(projectColor)).size).toBe(8);
+  });
+
+  it('adding a project never recolours an existing one', () => {
+    const base = ['alpha', 'beta', 'gamma'].map((slug, i) => ({ slug, createdAt: `2026-01-0${i + 1}` }));
+    assignProjectColors(base);
+    const before = base.map((p) => projectColor(p.slug));
+    assignProjectColors([...base, { slug: 'delta', createdAt: '2026-02-01' }, { slug: 'eps', createdAt: '2026-02-02' }]);
+    expect(base.map((p) => projectColor(p.slug))).toEqual(before);
   });
 });
 

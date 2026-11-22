@@ -1,42 +1,48 @@
 // The Cmd-K switcher (SPEC.md, Phase 8): ⌘K anywhere opens a search over the
 // projects (running first, then newest activity, as on the home page) and the
-// hub's pages. Enter opens the page; ⌘Enter on a project runs its Resume.
+// hub's actions and pages. Enter opens the page; ⌘Enter on a project runs its Resume.
 import { useQuery } from '@tanstack/react-query';
 import { Command } from 'cmdk';
-import { FolderOpen, Inbox, Lightbulb, LayoutGrid, Search, Settings } from 'lucide-react';
+import { Inbox, LayoutGrid, Lightbulb, Play, Plus, Search, Settings, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { sortProjects } from '../../src/server/activity.ts';
 import { fetchProjects } from './api.ts';
+import { runningCounts, runningLabel } from './colors.ts';
+import { newestPickUp } from './home/model.ts';
 import { openProject, resume, type Run } from './project/parts.tsx';
-import { StatusBadges, useActivity } from './project/status.tsx';
+import { useActivity } from './project/status.tsx';
 import { navigate } from './router.tsx';
-import { ago } from './ui.tsx';
+import { ago, Kbd, PingDot, ProjectChip } from './ui.tsx';
 
-const PAGES = [
-  { to: '/', label: 'Projects', Icon: LayoutGrid },
-  { to: '/inbox', label: 'Inbox', Icon: Inbox },
-  { to: '/ideas', label: 'Ideas', Icon: Lightbulb },
-  { to: '/settings', label: 'Settings', Icon: Settings },
+const PAGES: { to: string; label: string; Icon: LucideIcon }[] = [
+  { to: '/', label: 'Go to Projects', Icon: LayoutGrid },
+  { to: '/inbox', label: 'Go to Inbox', Icon: Inbox },
+  { to: '/ideas', label: 'Go to Ideas', Icon: Lightbulb },
+  { to: '/settings', label: 'Go to Settings', Icon: Settings },
 ];
 
 const PROJECT = 'project:';
 
-/** The nav's search button, which also shows the shortcut. */
+/** The top bar's search field, which opens the switcher and shows the shortcut. */
 export function SwitcherButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-2 rounded-md border border-stone-200 px-2 py-1 text-sm text-stone-500 hover:border-stone-400 dark:border-stone-700"
+      aria-label="Find a project (⌘K)"
+      className="flex h-9 shrink-0 items-center gap-2 rounded-btn border border-control bg-soft-2 px-2.5 text-[13px] text-muted transition hover:border-accent/40 sm:w-56"
     >
-      <Search size={14} aria-hidden />
-      Find
-      <kbd className="rounded bg-stone-100 px-1 font-sans text-xs dark:bg-stone-800">⌘K</kbd>
+      <Search size={15} aria-hidden />
+      <span className="hidden flex-1 text-left sm:inline">Find a project</span>
+      <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
     </button>
   );
 }
 
-export function Switcher({ run, open, setOpen }: { run: Run; open: boolean; setOpen: (open: boolean) => void }) {
+const itemClass = 'flex cursor-pointer items-center gap-3 rounded-btn px-2.5 py-2 text-[13px] data-[selected=true]:bg-accent/10 data-[selected=true]:text-ink';
+const groupClass = '[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-tiny [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-muted [&_[cmdk-group-heading]]:uppercase';
+
+export function Switcher({ run, open, setOpen, onNewProject }: { run: Run; open: boolean; setOpen: (open: boolean) => void; onNewProject?: () => void }) {
   const projects = useQuery({ queryKey: ['projects'], queryFn: fetchProjects }).data ?? [];
   const activity = useActivity();
   const [selected, setSelected] = useState('');
@@ -59,6 +65,7 @@ export function Switcher({ run, open, setOpen }: { run: Run; open: boolean; setO
 
   const sorted = sortProjects(projects, activity, (p) => p.slug);
   const ordered = [...sorted.filter((p) => !p.archived), ...sorted.filter((p) => p.archived)];
+  const pick = newestPickUp(sorted.filter((p) => !p.archived));
   const go = (to: string) => {
     setOpen(false);
     navigate(to);
@@ -81,23 +88,25 @@ export function Switcher({ run, open, setOpen }: { run: Run; open: boolean; setO
       value={selected}
       onValueChange={setSelected}
       onKeyDown={onKeyDown}
-      overlayClassName="fixed inset-0 z-40 bg-stone-950/40"
-      contentClassName="fixed inset-x-4 top-[12vh] z-50 mx-auto max-w-xl overflow-hidden rounded-xl border border-stone-200 bg-white shadow-2xl dark:border-stone-700 dark:bg-stone-900"
+      overlayClassName="fixed inset-0 z-40 bg-[#0f1216]/45"
+      contentClassName="hub-fade-up fixed inset-x-4 top-[12vh] z-50 mx-auto max-w-[620px] overflow-hidden rounded-header border border-line bg-card text-ink shadow-lift"
     >
-      <div className="flex items-center gap-2 border-b border-stone-200 px-3 dark:border-stone-700">
-        <Search size={16} className="text-stone-400" aria-hidden />
+      <div className="flex items-center gap-3 border-b border-line px-4">
+        <Search size={18} className="text-muted" aria-hidden />
         <Command.Input
           value={search}
           onValueChange={setSearch}
-          placeholder="Find a project or page…"
-          className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-stone-400"
+          placeholder="Find a project or action…"
+          className="w-full bg-transparent py-4 text-[16px] outline-none placeholder:text-muted"
         />
+        <Kbd>esc</Kbd>
       </div>
-      <Command.List className="max-h-[60vh] overflow-y-auto p-2 text-sm">
-        <Command.Empty className="px-2 py-6 text-center text-stone-500">Nothing matches.</Command.Empty>
-        <Command.Group heading="Projects" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-stone-500">
+      <Command.List className="max-h-[60vh] overflow-y-auto p-2">
+        <Command.Empty className="px-2 py-8 text-center text-muted">Nothing matches.</Command.Empty>
+        <Command.Group heading="Projects" className={groupClass}>
           {ordered.map((p) => {
             const last = activity?.[p.slug]?.last;
+            const counts = runningCounts(p.sessions);
             return (
               <Command.Item
                 key={p.slug}
@@ -107,36 +116,86 @@ export function Switcher({ run, open, setOpen }: { run: Run; open: boolean; setO
                   setOpen(false);
                   openProject(p.slug);
                 }}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 data-[selected=true]:bg-stone-100 dark:data-[selected=true]:bg-stone-800"
+                className={`group ${itemClass}`}
               >
-                <FolderOpen size={14} className="shrink-0 text-stone-400" aria-hidden />
-                <span className={`min-w-0 truncate font-medium ${p.archived ? 'text-stone-500' : ''}`}>{p.name}</span>
-                <span className="min-w-0 flex-1">
-                  <StatusBadges project={p} activity={activity?.[p.slug]} />
+                <ProjectChip slug={p.slug} name={p.name} size={26} />
+                <span className={`min-w-0 truncate font-medium ${p.archived ? 'text-muted' : ''}`}>{p.name}</span>
+                {p.archived && <span className="text-tiny text-muted">archived</span>}
+                {counts.running > 0 && (
+                  <span className="flex shrink-0 items-center gap-1 text-tiny font-medium text-live">
+                    <PingDot size={6} idle={counts.idle === counts.running} />
+                    {runningLabel(counts)}
+                  </span>
+                )}
+                <span className="flex-1" />
+                {last && <span className="shrink-0 font-mono text-tiny text-muted">{ago(last.at)}</span>}
+                <span className="hidden shrink-0 gap-1 group-data-[selected=true]:flex">
+                  <Kbd>↵</Kbd>
+                  <Kbd>⌘↵ Resume</Kbd>
                 </span>
-                {last && <span className="shrink-0 text-xs text-stone-500">{ago(last.at)}</span>}
               </Command.Item>
             );
           })}
         </Command.Group>
-        <Command.Group heading="Pages" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-stone-500">
-          {PAGES.map(({ to, label, Icon }) => (
+        <Command.Group heading="Actions" className={groupClass}>
+          {pick && (
             <Command.Item
-              key={to}
-              value={`page:${label}`}
-              onSelect={() => go(to)}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 data-[selected=true]:bg-stone-100 dark:data-[selected=true]:bg-stone-800"
+              value="action:resume-latest"
+              keywords={['resume', 'pick up', pick.project.name]}
+              onSelect={() => {
+                setOpen(false);
+                resume(pick.project, run);
+              }}
+              className={itemClass}
             >
-              <Icon size={14} className="text-stone-400" aria-hidden />
+              <span className="inline-flex size-[26px] items-center justify-center rounded-[8px] bg-accent/10 text-accent">
+                <Play size={13} aria-hidden fill="currentColor" />
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                Resume where you left off <span className="text-muted">· {pick.project.name}</span>
+              </span>
+            </Command.Item>
+          )}
+          {onNewProject && (
+            <Command.Item
+              value="action:new-project"
+              keywords={['add', 'new', 'project']}
+              onSelect={() => {
+                setOpen(false);
+                onNewProject();
+              }}
+              className={itemClass}
+            >
+              <span className="inline-flex size-[26px] items-center justify-center rounded-[8px] bg-soft text-muted">
+                <Plus size={14} aria-hidden />
+              </span>
+              New project
+            </Command.Item>
+          )}
+          {PAGES.map(({ to, label, Icon }) => (
+            <Command.Item key={to} value={`page:${label}`} onSelect={() => go(to)} className={itemClass}>
+              <span className="inline-flex size-[26px] items-center justify-center rounded-[8px] bg-soft text-muted">
+                <Icon size={14} aria-hidden />
+              </span>
               {label}
             </Command.Item>
           ))}
         </Command.Group>
       </Command.List>
-      <div className="flex gap-4 border-t border-stone-200 px-3 py-2 text-xs text-stone-500 dark:border-stone-700">
-        <span>↵ open</span>
-        <span>⌘↵ Resume</span>
-        <span>esc close</span>
+      <div className="flex flex-wrap gap-4 border-t border-line bg-soft-2 px-4 py-2.5 text-tiny text-muted">
+        <span className="flex items-center gap-1">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> move
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>↵</Kbd> open
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>⌘↵</Kbd> Resume
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>esc</Kbd> close
+        </span>
       </div>
     </Command.Dialog>
   );

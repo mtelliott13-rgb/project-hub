@@ -15,18 +15,39 @@ export const PROJECT_PALETTE = [
 
 export type ProjectColor = (typeof PROJECT_PALETTE)[number];
 
-/**
- * A project's colour, from a stable hash of its slug (FNV-1a), so a project
- * keeps its colour however the list changes: adding, removing or reordering
- * projects never recolours another one.
- */
-export function projectColor(slug: string): ProjectColor {
+const slotOf = (slug: string) => {
   let h = 0x811c9dc5;
   for (let i = 0; i < slug.length; i++) {
     h ^= slug.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return PROJECT_PALETTE[(h >>> 0) % PROJECT_PALETTE.length];
+  return (h >>> 0) % PROJECT_PALETTE.length;
+};
+
+const assigned = new Map<string, number>();
+
+/**
+ * Gives every project its slot: the slot its slug hashes to, or the next free
+ * one if an older project (by when it was added) already has it. A new project
+ * never recolours an existing one, and reordering or renaming changes nothing.
+ * Only removing a project can free a slot that a later, colliding one moves
+ * back to. Beyond eight projects, colours repeat.
+ */
+export function assignProjectColors(projects: { slug: string; createdAt: string }[]): void {
+  assigned.clear();
+  const used = new Set<number>();
+  const byAge = [...projects].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slug.localeCompare(b.slug));
+  for (const p of byAge) {
+    let slot = slotOf(p.slug);
+    if (used.size < PROJECT_PALETTE.length) while (used.has(slot)) slot = (slot + 1) % PROJECT_PALETTE.length;
+    used.add(slot);
+    assigned.set(p.slug, slot);
+  }
+}
+
+/** A project's colour (see assignProjectColors); the slug's own slot until the list has loaded. */
+export function projectColor(slug: string): ProjectColor {
+  return PROJECT_PALETTE[assigned.get(slug) ?? slotOf(slug)];
 }
 
 /** Up to two initials for a project chip: "Career HQ" → "CH", "hub" → "HU". */

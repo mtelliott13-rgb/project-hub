@@ -1,17 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { fetchFileError, fetchInbox, fetchProjects } from './api.ts';
+import { fetchFileError, fetchInbox } from './api.ts';
 import { InboxPage } from './InboxPage.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { IdeasPage } from './IdeasPage.tsx';
 import { launch, type LaunchBody } from './launch.ts';
-import { ProjectCard, type Run } from './ProjectCard.tsx';
 import { ProjectForm } from './ProjectForm.tsx';
 import { ProjectPage } from './ProjectPage.tsx';
 import { Link, route, usePath } from './router.tsx';
-import { Action } from './ui.tsx';
-import { sortProjects } from '../../src/server/activity.ts';
-import { useActivity } from './project/status.tsx';
+import { PrimaryButton } from './ui.tsx';
+import { HomePage } from './home/HomePage.tsx';
+import { Plus, User } from 'lucide-react';
 import { Switcher, SwitcherButton } from './Switcher.tsx';
 
 // Text you edit (notes, drafts) loads once and is never refetched underneath you.
@@ -62,34 +61,54 @@ export function App() {
     document.title = names[here.page] ? `${names[here.page]} · Project Hub` : 'Project Hub';
   }, [here.page]);
 
-  const navClass = (active: boolean) => `text-sm ${active ? 'font-medium' : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100'}`;
+  const tabs = [
+    { to: '/', label: 'Projects', on: here.page === 'home' || here.page === 'project' },
+    { to: '/inbox', label: 'Inbox', on: here.page === 'inbox', count: waiting },
+    { to: '/ideas', label: 'Ideas', on: here.page === 'ideas' },
+    { to: '/settings', label: 'Settings', on: here.page === 'settings' },
+  ];
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-      <main className="mx-auto max-w-6xl px-4 py-6">
-        <nav className="mb-6 flex items-center gap-4 border-b border-stone-200 pb-3 dark:border-stone-800">
-          <Link to="/" className="text-lg font-semibold">
-            Project Hub
+    <div className="min-h-screen bg-page text-ink">
+      <header className="sticky top-0 z-20 border-b border-line bg-card">
+        <nav className="mx-auto flex h-[60px] max-w-[1240px] items-center gap-3 px-4 sm:gap-5 sm:px-6" aria-label="Main">
+          <Link to="/" className="flex shrink-0 items-center gap-2 text-[15px] font-bold">
+            <span aria-hidden className="inline-block size-6 rounded-[7px] bg-gradient-to-br from-accent to-accent-2 shadow-glow" />
+            <span className="hidden sm:inline">Project Hub</span>
           </Link>
-          <Link to="/" className={navClass(here.page === 'home')}>
-            Projects
-          </Link>
-          <Link to="/inbox" className={navClass(here.page === 'inbox')}>
-            Inbox{waiting > 0 && <span data-testid="inbox-count"> ({waiting})</span>}
-          </Link>
-          <Link to="/ideas" className={navClass(here.page === 'ideas')}>
-            Ideas
-          </Link>
-          <Link to="/settings" className={navClass(here.page === 'settings')}>
-            Settings
-          </Link>
+          <div className="flex h-full items-stretch gap-1 overflow-x-auto sm:gap-2">
+            {tabs.map((t) => (
+              <Link
+                key={t.to}
+                to={t.to}
+                aria-current={t.on ? 'page' : undefined}
+                className={`flex items-center gap-1.5 border-b-2 px-1.5 text-[13px] font-medium whitespace-nowrap transition-colors ${t.on ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'}`}
+              >
+                {t.label}
+                {!!t.count && (
+                  <span data-testid="inbox-count" className="tnum rounded-pill bg-accent/10 px-1.5 text-tiny font-semibold text-accent">
+                    <span className="sr-only">(</span>
+                    {t.count}
+                    <span className="sr-only">)</span>
+                  </span>
+                )}
+              </Link>
+            ))}
+          </div>
           <span className="flex-1" />
           <SwitcherButton onClick={() => setFinding(true)} />
-          <Action primary onClick={() => setAdding(true)}>
-            Add project
-          </Action>
+          <PrimaryButton onClick={() => setAdding(true)} title="Add a project to projects.yaml">
+            <Plus size={14} aria-hidden />
+            <span className="hidden sm:inline">New project</span>
+            <span className="sr-only sm:hidden">New project</span>
+          </PrimaryButton>
+          <span aria-hidden className="hidden size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#E9EEFF] to-[#FFEFD8] text-muted sm:inline-flex">
+            <User size={15} />
+          </span>
         </nav>
+      </header>
+      <main className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6">
         {fileError && (
-          <p data-testid="file-error" className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p data-testid="file-error" className="mb-4 rounded-btn bg-red-50 px-3 py-2 text-[13px] text-red-700 dark:bg-red-950 dark:text-red-300">
             ~/.project-hub/projects.yaml has an error, so the hub is showing the last good version until it's fixed:{' '}
             <span className="font-mono text-xs whitespace-pre-wrap">{fileError}</span>
           </p>
@@ -97,55 +116,19 @@ export function App() {
         {status && (
           <p
             data-testid="launch-status"
-            className={`mb-4 rounded-md px-3 py-2 font-mono text-xs break-all ${status.ok ? 'bg-stone-100 text-stone-700 dark:bg-stone-900 dark:text-stone-300' : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'}`}
+            className={`mb-4 rounded-btn px-3 py-2 font-mono text-xs break-all ${status.ok ? 'border border-line bg-card text-muted' : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'}`}
           >
             {status.text}
           </p>
         )}
-        {here.page === 'home' && <Home run={run} />}
+        {here.page === 'home' && <HomePage run={run} />}
         {here.page === 'project' && <ProjectPage slug={here.slug} run={run} />}
         {here.page === 'ideas' && <IdeasPage />}
         {here.page === 'inbox' && <InboxPage run={run} />}
         {here.page === 'settings' && <SettingsPage />}
         {adding && <ProjectForm onClose={() => setAdding(false)} />}
-        <Switcher run={run} open={finding} setOpen={setFinding} />
+        <Switcher run={run} open={finding} setOpen={setFinding} onNewProject={() => setAdding(true)} />
       </main>
     </div>
-  );
-}
-
-function Home({ run }: { run: Run }) {
-  const { data, error, isPending } = useQuery({ queryKey: ['projects'], queryFn: fetchProjects });
-  const [showArchived, setShowArchived] = useState(false);
-  const activity = useActivity();
-  // Running projects first, then newest activity (src/server/activity.ts).
-  const sorted = sortProjects(data ?? [], activity, (p) => p.slug);
-  const active = sorted.filter((p) => !p.archived);
-  const archived = sorted.filter((p) => p.archived);
-  return (
-    <>
-      {isPending && <p className="text-stone-500">Loading…</p>}
-      {error && <p className="text-red-600">{error.message}</p>}
-      {data && active.length === 0 && <p className="text-stone-500">No projects yet. Use Add project to make one.</p>}
-      <ul className="grid gap-4 sm:grid-cols-2">
-        {active.map((p) => (
-          <ProjectCard key={p.slug} project={p} run={run} activity={activity?.[p.slug]} />
-        ))}
-      </ul>
-      {archived.length > 0 && (
-        <section className="mt-8">
-          <button type="button" className="text-sm text-stone-500 hover:underline" onClick={() => setShowArchived(!showArchived)}>
-            {showArchived ? 'Hide' : 'Show'} archived ({archived.length})
-          </button>
-          {showArchived && (
-            <ul className="mt-3 grid gap-4 sm:grid-cols-2">
-              {archived.map((p) => (
-                <ProjectCard key={p.slug} project={p} run={run} activity={activity?.[p.slug]} />
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-    </>
   );
 }
