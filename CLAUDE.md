@@ -161,9 +161,19 @@ Rules:
 
 - `src/server/activity.ts` holds the rules as pure functions with type-only imports, so the page imports them too: `buildTimeline` (sessions the page lists, chats, commits once each, the newest CI run, recent files grouped by clock hour, filed links), `lastActivity` (newest event, never CI), `isStale` (14 days or more; no activity at all is not stale), `statusBadges` (running, CI failing, PRs waiting, uncommitted, to push, stale, counts summed across repos) and `sortProjects` (running first, then newest activity, then name).
 - `GET /api/activity` gives every project's `{ last, stale }` for the home page; `GET /api/projects/:slug/activity?limit=` the timeline plus `total`. Both build on request from what the hub already has: commits are the last 10 per repo and files whatever the watcher holds (first-scan mtimes included). The SSE `files` topic refetches `activity` queries as well as `files`.
-- Cards: "Last:" line, badges with lucide icons, a repo line without what the badges say, 3 sessions; stale cards are dimmed in place. The folder/GitHub/keyword rows live on the project page only. The Activity section is first on the project page.
+- Cards (since v4, see below): status line, "Last:" strip, the badges the status line doesn't say, a repo line, toolkit bar and actions; no session list. The folder/GitHub/keyword rows live on the project page only.
 - `web/src/Switcher.tsx`: ⌘K anywhere (also the nav's Find button), built on `cmdk`. Enter opens a project or page, ⌘Enter runs the project's Resume.
 - cmdk 1.1.1 and lucide-react 1.59.0 are pinned exactly (lucide releases almost daily; pick versions at least two weeks old when upgrading).
+
+## v4 redesign (web UI only)
+
+- Tokens live in `web/src/index.css` (`@theme`: bg-page, bg-card, border-line, text-ink, text-muted, accent, live, warn, chart colours, radii, shadows), redefined for dark mode; use them, not raw hex. Fonts are self-hosted (`@fontsource-variable/inter`, `jetbrains-mono`); the page makes no outside requests.
+- Primitives in `web/src/ui.tsx` (Card, Pill, PingDot, ProjectChip, IconButton, PrimaryButton, SoftButton, Kbd, CollapsibleSection, useCountUp, useStoredFlag/useStoredList); hand-built SVG charts in `web/src/charts.tsx` (no chart library). Pure display rules (project colours, idle sessions, constellation angles) in `web/src/colors.ts`, chart binning in `web/src/project/chart-data.ts`, home derivations in `web/src/home/model.ts`; tested in `test/v4-ui.test.ts`.
+- Project colours: eight slots; each project takes its slug's hashed slot, or the next free one if an older project (`createdAt`) has it (`assignProjectColors`, run on every `fetchProjects`). Adding a project never recolours another.
+- Idle: a running session last active over 24 h ago shows "Running · idle Nd" and counts as "N running (M idle)". Display only; server state is unchanged.
+- Pins and open/closed sections are per browser (localStorage `project-hub:pins`, `project-hub:open:<scope>:<id>`), not the database's `pinned` column.
+- Project sections: `defaultOpen` and `summary(p)` in `SECTIONS`; summaries that need data share the section's query key.
+- Motion: one-shot load animations and a few live loops (`hub-*` classes in index.css); `prefers-reduced-motion` stops all of it, and confetti, pings and shimmer are hidden.
 
 ## MCP server (Phase 9, read-only)
 
