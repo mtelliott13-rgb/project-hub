@@ -120,7 +120,7 @@ export function LastActivity({ last, strip }: { last: ActivityEvent | null | und
       <span className="min-w-0 truncate">
         <span className="text-muted">Last:</span> {describeEvent(last)}
       </span>
-      <span className={`ml-auto shrink-0 text-muted ${strip ? 'font-mono text-tiny' : ''}`}>{strip ? ago(last.at) : `· ${ago(last.at)}`}</span>
+      <span className={`shrink-0 text-muted ${strip ? 'ml-auto font-mono text-tiny' : ''}`}>{strip ? ago(last.at) : `· ${ago(last.at)}`}</span>
     </p>
   );
 }

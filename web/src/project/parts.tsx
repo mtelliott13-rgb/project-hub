@@ -7,7 +7,8 @@ import type { LaunchBody } from '../launch.ts';
 import { ConfirmDelete, ProjectForm } from '../ProjectForm.tsx';
 import { listed, resumeTarget } from '../resume.ts';
 import { navigate } from '../router.tsx';
-import { Action, ago, IconButton, PrimaryButton, SoftButton } from '../ui.tsx';
+import { isIdle, sessionTag } from '../colors.ts';
+import { Action, ago, IconButton, PingDot, Pill, PrimaryButton, SoftButton } from '../ui.tsx';
 
 export type Run = (body: LaunchBody) => Promise<void>;
 
@@ -166,49 +167,54 @@ export function SessionList({ sessions: all, run, preview }: { sessions: Session
   const sessions = listed(all);
   const gone = all.filter((s) => !sessions.includes(s));
   const shown = preview && !showAll ? sessions.slice(0, preview) : sessions;
-  if (all.length === 0) return <p className="mt-1 text-sm text-stone-500">None yet</p>;
+  if (all.length === 0) return <p className="mt-1 text-[13px] text-muted">None yet</p>;
   return (
     <>
-      {sessions.length === 0 && <p className="mt-1 text-sm text-stone-500">None that can be reopened.</p>}
-      <ul className="mt-1 divide-y divide-stone-100 text-sm dark:divide-stone-800">
-        {shown.map((s) => (
-          <li key={s.id} data-testid="session-row" data-state={s.state} className="flex items-center gap-2 py-1.5">
-            <span
-              title={s.state}
-              className={`size-2 shrink-0 rounded-full ${s.state === 'running' ? 'bg-green-500' : 'bg-stone-300 dark:bg-stone-600'}`}
-            />
-            <span className="min-w-0 flex-1 truncate">{s.title ?? <span className="text-stone-500">Untitled session</span>}</span>
-            {s.gitBranch && <span className="shrink-0 font-mono text-xs text-stone-500">{s.gitBranch}</span>}
-            <span className="w-16 shrink-0 text-right text-xs text-stone-500">{ago(s.lastActiveAt)}</span>
-            {s.resumeProblem === null ? (
-              <span className="flex shrink-0 gap-1">
-                <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: s.id })}>
-                  Terminal
-                </Action>
-                <Action small title="Open in the Claude desktop app" onClick={() => run({ kind: 'desktop', sessionId: s.id })}>
-                  Desktop
-                </Action>
-              </span>
-            ) : (
-              <span className="shrink-0 text-xs text-stone-500" title={s.resumeProblem}>
-                not saved yet
-              </span>
-            )}
-          </li>
-        ))}
+      {sessions.length === 0 && <p className="mt-1 text-[13px] text-muted">None that can be reopened.</p>}
+      <ul className="divide-y divide-line text-[13px]">
+        {shown.map((s) => {
+          const idle = isIdle(s);
+          const tag = sessionTag(s);
+          return (
+            <li key={s.id} data-testid="session-row" data-state={s.state} data-idle={idle || undefined} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2">
+              {s.state === 'running' ? <PingDot idle={idle} /> : <span className="size-2 shrink-0 rounded-full bg-control" aria-hidden />}
+              <span className="min-w-0 flex-[1_1_180px] truncate font-medium">{s.title ?? <span className="font-normal text-muted">Untitled session</span>}</span>
+              <Pill tone={s.state !== 'running' ? 'neutral' : idle ? 'idle' : 'live'} data-testid="session-tag" title={idle ? 'Claude Code never reported that this session ended; no activity for over a day' : undefined}>
+                {tag}
+              </Pill>
+              {s.gitBranch && <span className="hidden shrink-0 font-mono text-tiny text-muted sm:inline">{s.gitBranch}</span>}
+              <span className="w-14 shrink-0 text-right font-mono text-tiny text-muted">{ago(s.lastActiveAt)}</span>
+              {s.resumeProblem === null ? (
+                <span className="flex shrink-0 gap-1">
+                  <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: s.id })}>
+                    Terminal
+                  </Action>
+                  <Action small title="Open in the Claude desktop app" onClick={() => run({ kind: 'desktop', sessionId: s.id })}>
+                    Desktop
+                  </Action>
+                  <CopyResume id={s.id} />
+                </span>
+              ) : (
+                <span className="shrink-0 text-xs text-muted" title={s.resumeProblem}>
+                  not saved yet
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {preview !== undefined && sessions.length > preview && (
-        <button type="button" className="mt-1 mr-3 text-xs text-stone-500 underline" onClick={() => setShowAll(!showAll)}>
+        <button type="button" className="mt-1 mr-3 text-xs text-muted underline" onClick={() => setShowAll(!showAll)}>
           {showAll ? 'Show fewer' : `Show all ${sessions.length}`}
         </button>
       )}
       {gone.length > 0 && (
         <>
-          <button type="button" data-testid="unreopenable-toggle" className="mt-1 text-xs text-stone-500 underline" onClick={() => setShowGone(!showGone)}>
+          <button type="button" data-testid="unreopenable-toggle" className="mt-1 text-xs text-muted underline" onClick={() => setShowGone(!showGone)}>
             {showGone ? 'Hide' : `${gone.length} more can't be reopened`}
           </button>
           {showGone && (
-            <ul className="mt-1 space-y-0.5 text-xs text-stone-500">
+            <ul className="mt-1 space-y-0.5 text-xs text-muted">
               {gone.map((s) => (
                 <li key={s.id} data-testid="unreopenable-row" className="flex gap-2">
                   <span className="min-w-0 flex-1 truncate">{s.title ?? 'Untitled session'}</span>
@@ -223,6 +229,26 @@ export function SessionList({ sessions: all, run, preview }: { sessions: Session
         </>
       )}
     </>
+  );
+}
+
+/** Copies `claude --resume <id>` and says "Copied ✓" for about 1.5 s. */
+function CopyResume({ id }: { id: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1500);
+    return () => clearTimeout(t);
+  }, [state]);
+  const copy = () =>
+    navigator.clipboard.writeText(`claude --resume ${id}`).then(
+      () => setState('copied'),
+      () => setState('failed'),
+    );
+  return (
+    <Action small title={`Copy "claude --resume ${id}"`} onClick={() => void copy()}>
+      <span aria-live="polite">{state === 'copied' ? 'Copied ✓' : state === 'failed' ? "Couldn't copy" : 'Copy'}</span>
+    </Action>
   );
 }
 

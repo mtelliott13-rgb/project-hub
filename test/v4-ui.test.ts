@@ -111,3 +111,44 @@ describe('constellation angles', () => {
     }
   });
 });
+
+import { binDays, monotonePath, niceScale } from '../web/src/project/chart-data.ts';
+import type { ActivityEvent } from '../src/server/activity.ts';
+
+describe('activity chart data', () => {
+  const now = new Date(2026, 10, 21, 15, 0).getTime();
+  const at = (daysBack: number, hour = 10) => new Date(2026, 10, 21 - daysBack, hour).toISOString();
+  const events: ActivityEvent[] = [
+    { kind: 'session', at: at(0), title: null, state: 'ended', sessionId: 's1', reopenable: true },
+    { kind: 'chat', at: at(0, 9), title: null, chatId: 'c1' },
+    { kind: 'commit', at: at(2), title: 'x', short: 'abc', url: null },
+    { kind: 'files', at: at(2), count: 5, names: ['a'], path: '/a' },
+    { kind: 'ci', at: at(1), state: 'passing', workflow: 'CI', url: 'https://example.com' },
+    { kind: 'session', at: at(15), title: null, state: 'ended', sessionId: 's2', reopenable: true },
+  ];
+
+  it('bins the last 10 days, today last, and ignores CI and older events', () => {
+    const bins = binDays(events, 10, now);
+    expect(bins).toHaveLength(10);
+    expect(bins[9].today).toBe(true);
+    expect(bins[9]).toMatchObject({ sessions: 1, chats: 1, claude: 2, code: 0 });
+    expect(bins[7]).toMatchObject({ commits: 1, files: 1, code: 2, claude: 0 });
+    expect(bins.reduce((n, b) => n + b.claude + b.code, 0)).toBe(4);
+  });
+
+  it('picks tidy axis steps', () => {
+    expect(niceScale(0)).toEqual({ top: 4, step: 2 });
+    expect(niceScale(5)).toEqual({ top: 6, step: 2 });
+    expect(niceScale(7)).toEqual({ top: 8, step: 2 });
+    expect(niceScale(17)).toEqual({ top: 20, step: 5 });
+  });
+
+  it('draws a monotone curve that never leaves each segment range', () => {
+    const pts: [number, number][] = [[0, 100], [10, 100], [20, 0], [30, 100], [40, 100]];
+    const d = monotonePath(pts);
+    const ys = [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[2]));
+    expect(Math.max(...ys)).toBeLessThanOrEqual(100);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(monotonePath([])).toBe('');
+  });
+});

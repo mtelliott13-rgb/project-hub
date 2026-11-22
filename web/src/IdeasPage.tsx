@@ -132,7 +132,7 @@ export function ProjectIdeas({ project }: SectionProps) {
   const done = items.filter((i) => i.done);
   return (
     <div className="space-y-2">
-      {open.length > 0 ? <IdeaList items={open} actions={actions} /> : <p className="text-sm text-stone-500">No open ideas.</p>}
+      {open.length > 0 ? <IdeaList items={open} actions={actions} /> : <p className="text-[13px] text-muted">None open</p>}
       {done.length > 0 && <p className="text-xs text-stone-500">{done.length} done. See all on the <Link to="/ideas" className="underline">Ideas page</Link>.</p>}
       <AddIdea scope={project.slug} onAdd={(v) => actions.add.mutateAsync(v)} busy={actions.add.isPending} />
       {actions.error && <p className="text-sm text-red-600">{actions.error.message}</p>}
