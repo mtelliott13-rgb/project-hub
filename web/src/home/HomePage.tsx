@@ -152,7 +152,7 @@ function Welcome({ projects, stats, run }: { projects: ProjectDto[]; stats: Home
         <p className="mt-1 text-[14px] text-[#4b5260]">
           {stats.running === 0
             ? 'Nothing running right now.'
-            : `${stats.idle ? `${runningLabel(stats)} sessions` : `${sessions} running`} across ${stats.runningProjects} project${stats.runningProjects === 1 ? '' : 's'}.`}
+            : `${sessions} running${stats.idle ? ` (${stats.idle} idle)` : ''} across ${stats.runningProjects} project${stats.runningProjects === 1 ? '' : 's'}.`}
         </p>
       </div>
       <div className="relative w-full rounded-card bg-white/95 p-4 text-[#1F2329] shadow-lift sm:w-auto sm:min-w-[340px] sm:flex-[0_1_400px]">

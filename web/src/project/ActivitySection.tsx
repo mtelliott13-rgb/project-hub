@@ -7,8 +7,8 @@ import { Play, Square } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { describeEvent } from '../../../src/server/activity.ts';
 import { fetchTimeline, type ActivityEvent } from '../api.ts';
-import { Action, TextButton } from '../ui.tsx';
-import { tint } from '../colors.ts';
+import { Action, Pill, TextButton } from '../ui.tsx';
+import { isIdle, sessionTag, tint } from '../colors.ts';
 import { eventColor, eventIcon } from './status.tsx';
 import type { SectionProps } from './sections.tsx';
 
@@ -114,6 +114,16 @@ function Row({ e, project, run, lit, dim }: { e: ActivityEvent; lit?: boolean; d
   let action: ReactNode = null;
   switch (e.kind) {
     case 'session':
+      // A running session quiet for over a day is idle (Claude Code never reported it ended).
+      if (e.state === 'running' && isIdle({ state: e.state, lastActiveAt: e.at }))
+        body = (
+          <>
+            {text}{' '}
+            <Pill tone="idle" data-testid="session-tag">
+              {sessionTag({ state: e.state, lastActiveAt: e.at })}
+            </Pill>
+          </>
+        );
       if (e.reopenable)
         action = (
           <Action small title="Resume in Terminal" onClick={() => run({ kind: 'session', sessionId: e.sessionId })}>

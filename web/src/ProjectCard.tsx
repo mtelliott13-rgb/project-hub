@@ -19,7 +19,7 @@ export function CardStatus({ project: p }: { project: ProjectDto }) {
   const uncommitted = p.repoStatus.reduce((n, r) => n + (r?.git?.uncommitted ?? 0), 0);
   if (counts.running)
     return (
-      <span className="flex items-center gap-1.5 text-meta font-medium text-live" data-testid="card-status">
+      <span className={`flex items-center gap-1.5 text-meta font-medium ${counts.idle === counts.running ? 'text-warn' : 'text-live'}`} data-testid="card-status">
         <PingDot idle={counts.idle === counts.running} />
         {runningLabel(counts)}
       </span>

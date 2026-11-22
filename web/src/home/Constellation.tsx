@@ -21,7 +21,7 @@ const RINGS: Record<Tier, { rx: number; ry: number }> = {
 };
 const TIERS: Tier[] = ['running', 'recent', 'quiet'];
 
-type Node = { p: ProjectDto; tier: Tier; x: number; y: number; cos: number; sin: number; sub: string };
+type Node = { p: ProjectDto; tier: Tier; angle: number; x: number; y: number; cos: number; sin: number; sub: string };
 
 function subLine(p: ProjectDto, tier: Tier, a: ProjectActivity | undefined): string {
   if (tier === 'running') return runningLabel(runningCounts(p.sessions));
@@ -30,8 +30,34 @@ function subLine(p: ProjectDto, tier: Tier, a: ProjectActivity | undefined): str
   return longAgo(a.last.at);
 }
 
+/** Where a node's label sits: on the side away from the centre. */
+function labelSpot(cos: number, sin: number, r: number) {
+  const side: 'start' | 'end' | 'middle' = cos > 0.25 ? 'start' : cos < -0.25 ? 'end' : 'middle';
+  const dx = side === 'start' ? r + 6 : side === 'end' ? -(r + 6) : 0;
+  const dy = side === 'middle' ? (sin > 0 ? r + 13 : -(r + 18)) : -1;
+  return { side, dx, dy };
+}
+
+/** The label's rough box (name plus sub-line), for keeping labels apart. */
+function labelBox(n: Node) {
+  const r = n.tier === 'running' ? 7 : 5.5;
+  const { side, dx, dy } = labelSpot(n.cos, n.sin, r);
+  const w = Math.max(Math.min(n.p.name.length, 22) * 6.9, n.sub.length * 5.8) + 4;
+  const x0 = side === 'start' ? n.x + dx : side === 'end' ? n.x + dx - w : n.x - w / 2;
+  const y0 = n.y + dy - 11;
+  return { x0, x1: x0 + w, y0, y1: y0 + 28 };
+}
+
+function place(p: ProjectDto, tier: Tier, angle: number, sub: string): Node {
+  const rad = (angle * Math.PI) / 180;
+  const { rx, ry } = RINGS[tier];
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { p, tier, angle, x: CX + rx * cos, y: CY + ry * sin, cos, sin, sub };
+}
+
 function layout(projects: ProjectDto[], activity: Record<string, ProjectActivity> | undefined): Node[] {
-  const nodes: Node[] = [];
+  let nodes: Node[] = [];
   TIERS.forEach((tier, t) => {
     const here = projects.filter((p) => tierOf(p, activity) === tier);
     // Offset each ring a little so tiers don't line their labels up.
@@ -39,14 +65,25 @@ function layout(projects: ProjectDto[], activity: Record<string, ProjectActivity
       here.map((p) => slugAngle(p.slug) + t * 17),
       Math.min(46, 360 / Math.max(1, here.length)),
     );
-    here.forEach((p, i) => {
-      const rad = (angles[i] * Math.PI) / 180;
-      const { rx, ry } = RINGS[tier];
-      const cos = Math.cos(rad);
-      const sin = Math.sin(rad);
-      nodes.push({ p, tier, x: CX + rx * cos, y: CY + ry * sin, cos, sin, sub: subLine(p, tier, activity?.[p.slug]) });
-    });
+    here.forEach((p, i) => nodes.push(place(p, tier, angles[i], subLine(p, tier, activity?.[p.slug]))));
   });
+  // Labels on different rings can still collide: nudge the outer one along its
+  // ring until it's clear (a few passes; deterministic, so nothing jumps around).
+  for (let pass = 0; pass < 24; pass++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++)
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = labelBox(nodes[i]);
+        const b = labelBox(nodes[j]);
+        if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) {
+          const k = TIERS.indexOf(nodes[j].tier) >= TIERS.indexOf(nodes[i].tier) ? j : i;
+          const n = nodes[k];
+          nodes = nodes.map((m, idx) => (idx === k ? place(n.p, n.tier, n.angle + 9, n.sub) : m));
+          moved = true;
+        }
+      }
+    if (!moved) break;
+  }
   return nodes;
 }
 
@@ -137,10 +174,7 @@ export function Constellation({ projects, activity }: { projects: ProjectDto[]; 
               const c = projectColor(n.p.slug);
               const dim = hover && hover !== n.p.slug ? 0.35 : 1;
               const r = n.tier === 'running' ? 7 : 5.5;
-              // Labels sit on the side away from the centre.
-              const side = n.cos > 0.25 ? 'start' : n.cos < -0.25 ? 'end' : 'middle';
-              const dx = side === 'start' ? r + 6 : side === 'end' ? -(r + 6) : 0;
-              const dy = side === 'middle' ? (n.sin > 0 ? r + 13 : -(r + 18)) : -1;
+              const { side, dx, dy } = labelSpot(n.cos, n.sin, r);
               return (
                 <a
                   key={n.p.slug}
