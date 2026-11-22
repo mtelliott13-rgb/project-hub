@@ -1,1 +1,234 @@
 @import 'tailwindcss';
+/* Self-hosted fonts: the hub makes no outside requests. */
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/*
+ * Design tokens (v4). Use these utilities (bg-page, bg-card, border-line,
+ * text-ink, text-muted, bg-accent, rounded-card, shadow-card…) instead of raw
+ * hex values. Dark mode redefines the same variables further down.
+ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Surfaces and text */
+  --color-page: #f4f6f9;
+  --color-card: #ffffff;
+  --color-line: #eceef1;
+  --color-control: #e6e8ec;
+  --color-soft: #f6f7f9;
+  --color-soft-2: #f8f9fb;
+  --color-track: #f1f3f5;
+  --color-ink: #1f2329;
+  --color-muted: #646a73;
+
+  /* Accent */
+  --color-accent: #3b5bdb;
+  --color-accent-2: #2aa79b;
+  --color-glow: rgba(59, 91, 219, 0.28);
+
+  /* Status */
+  --color-live: #15803d;
+  --color-live-dot: #16a34a;
+  --color-live-bg: #e9f7ef;
+  --color-warn: #b45309;
+  --color-warn-bg: #fef3e2;
+
+  /* Charts (colorblind-checked in this order) */
+  --color-chart-sessions: #3e63dd;
+  --color-chart-chats: #e5663a;
+  --color-chart-commits: #2aa79b;
+  --color-chart-files: #e0a21b;
+
+  /* Shape */
+  --radius-card: 14px;
+  --radius-header: 16px;
+  --radius-banner: 18px;
+  --radius-btn: 10px;
+  --radius-pill: 99px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-lift: 0 16px 32px -12px rgba(16, 24, 40, 0.16);
+  --shadow-glow: 0 6px 16px -6px var(--color-glow);
+
+  --text-meta: 12px;
+  --text-tiny: 11px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-page: #0f1216;
+    --color-card: #171b21;
+    --color-line: #262b33;
+    --color-control: #2e343d;
+    --color-soft: #1d2229;
+    --color-soft-2: #1b1f26;
+    --color-track: #262b33;
+    --color-ink: #e8eaed;
+    --color-muted: #9aa1ab;
+    --color-accent: #6f8cf0;
+    --color-glow: rgba(111, 140, 240, 0.3);
+    --color-live: #4ade80;
+    --color-live-bg: rgba(22, 163, 74, 0.16);
+    --color-warn: #fbbf24;
+    --color-warn-bg: rgba(217, 119, 6, 0.16);
+    --shadow-lift: 0 16px 32px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background: var(--color-page);
+    color: var(--color-ink);
+    font-size: 13px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* One-shot load animations and the few "live" loops. */
+@keyframes hub-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes hub-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes hub-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes hub-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes hub-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+@keyframes hub-ping {
+  75%,
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+@keyframes hub-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hub-float {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes hub-twinkle {
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes hub-glow {
+  50% {
+    opacity: 0.45;
+    transform: scale(1.08);
+  }
+}
+@keyframes hub-pop {
+  40% {
+    transform: scale(1.35);
+  }
+}
+@keyframes hub-confetti {
+  to {
+    transform: translate(var(--dx), var(--dy)) rotate(var(--rot));
+    opacity: 0;
+  }
+}
+@keyframes hub-needle {
+  from {
+    transform: rotate(-90deg);
+  }
+}
+
+.hub-fade-up {
+  animation: hub-fade-up 0.45s ease-out both;
+}
+.hub-grow {
+  transform-origin: left;
+  animation: hub-grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.hub-shimmer {
+  animation: hub-shimmer 3.2s ease-in-out 1.2s infinite;
+}
+.hub-draw {
+  animation: hub-draw 1.1s cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+}
+.hub-flow {
+  stroke-dasharray: 4 6;
+  animation: hub-flow 1.2s linear infinite;
+}
+.hub-ping {
+  animation: hub-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hub-spin {
+  animation: hub-spin 14s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hub-float {
+  animation: hub-float 6s ease-in-out infinite;
+}
+.hub-twinkle {
+  animation: hub-twinkle 2.6s ease-in-out infinite;
+}
+.hub-glow {
+  animation: hub-glow var(--glow-speed, 3s) ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hub-pop {
+  animation: hub-pop 0.5s ease-out;
+}
+.hub-confetti {
+  animation: hub-confetti 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+/* Every animation respects reduced motion: load animations jump to their end, loops stop. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .hub-shimmer,
+  .hub-confetti,
+  .hub-ping {
+    display: none;
+  }
+}
