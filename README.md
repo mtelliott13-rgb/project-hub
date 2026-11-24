@@ -9,9 +9,11 @@ I left off.
 
 ![Project Hub home page, running on the sample data](docs/screenshot.png)
 
+![The project map: running projects pulse, lines flow toward the centre, and hovering a project shows its details](docs/constellation.gif)
+
 I use it every day on my own projects. The screenshot and `sample-data/` use made-up content so my job applications, chats and notes stay private.
 
-**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 262 tests, CI on every push.
+**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 263 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 `~/.project-hub/`. Project data stays on this Mac. What goes out:
@@ -102,7 +104,11 @@ cover change detection class project, and Project Hub itself), but all of its
 content is made up: notes, ideas, toolkit checklists, files and a fake Career HQ
 application queue and job feed. It shows every section without your own data.
 It runs on port 4748 and doesn't touch `~/.project-hub/` or read your Claude
-Code sessions. The screenshot above is this sample data.
+Code sessions. Instead, each run adds made-up sessions (two live, one idle for
+days), chats and a small git repo with uncommitted changes, all timed relative
+to when you start it. Those sessions don't exist in Claude Code, so Resume on one
+opens Terminal and Claude Code says it can't find it. The screenshot above is
+this sample data.
 
 Needs Node.js 22.18 or newer, and pnpm (`corepack enable` turns it on).
 

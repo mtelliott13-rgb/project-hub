@@ -1,11 +1,11 @@
 // The project constellation: every active project on one of three orbits around
 // a centre showing live sessions. Running projects sit on the inner ring,
-// recent ones on the middle, quiet (stale) ones on the outer, each at a stable
-// angle from its slug. Hover or focus highlights one; click opens it.
+// recent ones on the middle, quiet (stale) ones on the outer, evenly spaced and
+// balanced across rings (ringAngles). Hover or focus highlights one; click opens it.
 import { useState } from 'react';
 import { describeEvent } from '../../../src/server/activity.ts';
 import type { ProjectActivity, ProjectDto } from '../api.ts';
-import { initials, isIdle, projectColor, runningCounts, runningLabel, slugAngle, spreadAngles } from '../colors.ts';
+import { initials, isIdle, projectColor, runningCounts, runningLabel, ringAngles } from '../colors.ts';
 import { navigate } from '../router.tsx';
 import { ago, Card } from '../ui.tsx';
 import { daysSince, longAgo, tierOf, type Tier } from './model.ts';
@@ -66,15 +66,9 @@ function place(p: ProjectDto, tier: Tier, angle: number, sub: string): Node {
 
 function layout(projects: ProjectDto[], activity: Record<string, ProjectActivity> | undefined): Node[] {
   let nodes: Node[] = [];
-  TIERS.forEach((tier, t) => {
-    const here = projects.filter((p) => tierOf(p, activity) === tier);
-    // Offset each ring a little so tiers don't line their labels up.
-    const angles = spreadAngles(
-      here.map((p) => slugAngle(p.slug) + t * 17),
-      Math.min(46, 360 / Math.max(1, here.length)),
-    );
-    here.forEach((p, i) => nodes.push(place(p, tier, angles[i], subLine(p, tier, activity?.[p.slug]))));
-  });
+  const rings = TIERS.map((tier) => projects.filter((p) => tierOf(p, activity) === tier));
+  const angles = ringAngles(rings.map((ring) => ring.map((p) => p.slug)));
+  TIERS.forEach((tier, t) => rings[t].forEach((p, i) => nodes.push(place(p, tier, angles[t][i], subLine(p, tier, activity?.[p.slug])))));
   // Labels on different rings can still collide: nudge the outer one along its
   // ring until it's clear (a few passes; deterministic, so nothing jumps around).
   for (let pass = 0; pass < 24; pass++) {
@@ -110,7 +104,7 @@ export function Constellation({ projects, activity }: { projects: ProjectDto[]; 
         <span className="flex-1" />
         <ul className="flex flex-wrap items-center gap-3 text-meta text-muted" aria-label="Legend">
           <li className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-full bg-live-dot" aria-hidden /> Running
+            <span className="size-2.5 rounded-full bg-accent ring-[1.5px] ring-live-dot ring-offset-1 ring-offset-card" aria-hidden /> Running
           </li>
           <li className="flex items-center gap-1.5">
             <span className="size-2 rounded-full bg-accent" aria-hidden /> Recent
@@ -211,6 +205,7 @@ export function Constellation({ projects, activity }: { projects: ProjectDto[]; 
                   ) : (
                     <circle cx={n.x} cy={n.y} r={r} fill={c.base} stroke="var(--color-card)" strokeWidth={2} />
                   )}
+                  {n.tier === 'running' && <circle cx={n.x} cy={n.y} r={r + 2.5} fill="none" stroke="var(--color-live-dot)" strokeWidth={1.5} data-running-ring />}
                   <text x={label.x} y={label.y} textAnchor={label.side} fontSize={12} fontWeight={600} fill="var(--color-ink)">
                     {n.p.name.length > 22 ? `${n.p.name.slice(0, 21)}…` : n.p.name}
                   </text>

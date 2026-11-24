@@ -117,34 +117,28 @@ export function slugAngle(slug: string): number {
   return ((h >>> 0) % 3600) / 10;
 }
 
+/** Where the first project of each single-project ring goes (degrees; 0 = right, 90 = down): upper right. */
+const SINGLES_START = -60;
+
 /**
- * Spreads angles on a ring so labels don't collide: each keeps its own angle
- * unless it's closer than `gap` degrees to the previous one, in which case it's
- * pushed along. Input order doesn't matter; output lines up with input.
+ * Constellation angles (degrees, 0 = right, 90 = down) for rings of slugs,
+ * inner to outer; the output lines up with the input. Each ring's projects
+ * are evenly spaced in slugAngle order, so a project keeps its place while its
+ * ring's members stay the same. A ring of two or more balances itself, and is
+ * turned a third of its spacing per tier so rings don't line their dots up.
+ * Rings with one project are spread evenly among themselves (two sit opposite
+ * each other), so the map doesn't tip to one side.
  */
-export function spreadAngles(angles: number[], gap: number): number[] {
-  if (angles.length < 2) return [...angles];
-  const order = angles.map((a, i) => ({ a: ((a % 360) + 360) % 360, i })).sort((x, y) => x.a - y.a);
-  const n = order.length;
-  const step = Math.min(gap, 360 / n);
-  // Start after the largest gap, so pushing never wraps into the first one.
-  let start = 0;
-  let widest = -1;
-  for (let k = 0; k < n; k++) {
-    const next = k === n - 1 ? order[0].a + 360 : order[k + 1].a;
-    if (next - order[k].a > widest) {
-      widest = next - order[k].a;
-      start = (k + 1) % n;
-    }
-  }
-  const out = new Array<number>(n);
-  let prev = -Infinity;
-  for (let j = 0; j < n; j++) {
-    const { a, i } = order[(start + j) % n];
-    let v = a + (j > 0 && (start + j) % n < start ? 360 : 0);
-    if (v < prev + step) v = prev + step;
-    out[i] = v % 360;
-    prev = v;
-  }
-  return out;
+export function ringAngles(rings: string[][]): number[][] {
+  const singles = rings.flatMap((r, t) => (r.length === 1 ? [t] : []));
+  const norm = (a: number) => ((a % 360) + 360) % 360;
+  return rings.map((ring, t) => {
+    if (ring.length === 0) return [];
+    if (ring.length === 1) return [norm(SINGLES_START + (singles.indexOf(t) * 360) / singles.length)];
+    const step = 360 / ring.length;
+    const order = ring.map((slug, i) => ({ a: slugAngle(slug), slug, i })).sort((x, y) => x.a - y.a || x.slug.localeCompare(y.slug));
+    const out = new Array<number>(ring.length);
+    order.forEach(({ i }, k) => (out[i] = norm((t * step) / 3 + k * step)));
+    return out;
+  });
 }

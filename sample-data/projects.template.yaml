@@ -13,6 +13,8 @@ projects:
   # Market-data collector and paper-trading system (simulated trades only).
   - slug: market-data-pipeline
     name: Market Data Pipeline
+    # Built fresh by `pnpm sample` (gitignored): a short history plus uncommitted changes.
+    repos: [{{SAMPLE}}/repos/market-data-pipeline]
     folders: [{{SAMPLE}}/workspace/market-data-pipeline]
     keywords: [market data, paper trading, pipeline]
 

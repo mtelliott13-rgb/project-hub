@@ -1,7 +1,7 @@
 // v4 redesign: the page's pure display rules (project colours, idle sessions,
 // constellation placement).
 import { describe, expect, it } from 'vitest';
-import { assignProjectColors, dayPart, idleDays, initials, isIdle, PROJECT_PALETTE, projectColor, runningCounts, runningLabel, sessionTag, slugAngle, spreadAngles } from '../web/src/colors.ts';
+import { assignProjectColors, dayPart, idleDays, initials, isIdle, PROJECT_PALETTE, projectColor, runningCounts, runningLabel, sessionTag, ringAngles, slugAngle } from '../web/src/colors.ts';
 
 const NOW = Date.parse('2026-11-21T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
@@ -95,20 +95,24 @@ describe('constellation angles', () => {
     expect(slugAngle('career-hq')).toBeLessThan(360);
   });
 
-  it('spreads close angles apart and keeps far ones', () => {
-    const out = spreadAngles([10, 12, 200], 30);
-    const gap = Math.abs(out[1] - out[0]);
-    expect(Math.min(gap, 360 - gap)).toBeGreaterThanOrEqual(29.99);
-    expect(out[2]).toBe(200);
+  const sumVec = (angles: number[]) => angles.reduce(([x, y], a) => [x + Math.cos((a * Math.PI) / 180), y + Math.sin((a * Math.PI) / 180)], [0, 0]);
+
+  it('spaces each ring evenly, in a stable order whatever the input order', () => {
+    const [ring] = ringAngles([['a', 'b', 'c']]);
+    const sorted = [...ring].sort((x, y) => x - y);
+    expect(sorted[1] - sorted[0]).toBeCloseTo(120);
+    expect(sorted[2] - sorted[1]).toBeCloseTo(120);
+    const [shuffled] = ringAngles([['c', 'a', 'b']]);
+    expect(shuffled).toEqual([ring[2], ring[0], ring[1]]);
   });
 
-  it('handles wrap-around and crowded rings', () => {
-    const out = spreadAngles([355, 2, 5, 8], 40);
-    const sorted = [...out].sort((a, b) => a - b);
-    for (let i = 0; i < sorted.length; i++) {
-      const next = i === sorted.length - 1 ? sorted[0] + 360 : sorted[i + 1];
-      expect(next - sorted[i]).toBeGreaterThanOrEqual(39.99);
-    }
+  it('turns rings by tier and balances single-project rings against each other', () => {
+    const [inner, middle, outer] = ringAngles([['a', 'b'], ['c'], ['d']]);
+    const [x, y] = sumVec([...inner, ...middle, ...outer]);
+    expect(Math.hypot(x, y)).toBeLessThan(1e-9);
+    expect(Math.abs(middle[0] - outer[0])).toBeCloseTo(180);
+    const [r0, r1] = ringAngles([['a', 'b'], ['c', 'd']]);
+    expect(new Set([...r0, ...r1].map((a) => a.toFixed(3))).size).toBe(4);
   });
 });
 
