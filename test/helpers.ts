@@ -13,6 +13,7 @@ import type { Connector } from '../src/server/connectors/types.ts';
 import { memorySecrets } from '../src/server/secrets.ts';
 import { calendarService, type CalendarBackend } from '../src/server/calendar.ts';
 import { sampleCalendarBackend } from '../src/server/connectors/google-calendar.ts';
+import { taskService } from '../src/server/tasks.ts';
 
 /** The hub's own origin in tests; requests go to full URLs so the Host check sees it. */
 export const HUB = 'http://127.0.0.1:4747';
@@ -48,6 +49,7 @@ export function testDeps(db: Db, opts: { connectors?: Connector[]; fetch?: typeo
   });
   // The calendar defaults to the local stand-in (no requests).
   const calendar = calendarService({ db, backend: opts.calendarBackend?.(connectors) ?? sampleCalendarBackend(), now: opts.now });
+  const tasks = taskService(db, opts.now);
   const launched: LaunchPlan[] = [];
   // Fake processes for collector tests: port -> listeners.
   const listening = new Map<number, Listener[]>();
@@ -103,6 +105,7 @@ export function testDeps(db: Db, opts: { connectors?: Connector[]; fetch?: typeo
     secrets,
     connectors,
     calendar,
+    tasks,
     deps: {
       store,
       docs,
@@ -125,6 +128,7 @@ export function testDeps(db: Db, opts: { connectors?: Connector[]; fetch?: typeo
       agentToken: AGENT_TOKEN,
       connectors,
       calendar,
+      tasks,
     },
   };
 }

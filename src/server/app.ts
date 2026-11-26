@@ -27,8 +27,9 @@ import { findQueueFiles, packetFile as findPacketFile, PACKET_FILES, queueRoot, 
 import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
 import { addConnectorRoutes } from './connectors/routes.ts';
-import { addCalendarRoutes } from './calendar-routes.ts';
+import { addCalendarRoutes, landingPage } from './calendar-routes.ts';
 import type { CalendarService } from './calendar.ts';
+import { addTaskRoutes, type TaskService } from './tasks.ts';
 import type { ConnectorRegistry } from './connectors/registry.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
@@ -103,6 +104,8 @@ type AppDeps = DocDeps & {
   connectors: ConnectorRegistry;
   /** Cached Google Calendar events and createEvent (Today page). */
   calendar: CalendarService;
+  /** Undated tasks (Today page). */
+  tasks: TaskService;
 };
 
 /**
@@ -250,6 +253,7 @@ export function createApp(deps: AppDeps) {
   addAgentRoutes(app, deps);
   addConnectorRoutes(app, deps.connectors, origins);
   addCalendarRoutes(app, { db, calendar: deps.calendar, connectors: deps.connectors, origins });
+  addTaskRoutes(app, { tasks: deps.tasks, calendar: deps.calendar, origins });
   addApplicationRoutes(app, deps);
 
   // The folder picker.
@@ -474,7 +478,9 @@ export function createApp(deps: AppDeps) {
     c.header('Cache-Control', 'no-store');
     c.header('X-Frame-Options', 'DENY');
     c.header('Content-Security-Policy', "frame-ancestors 'none'");
-    return c.html(injectToken(fs.readFileSync(indexHtml, 'utf8'), uiToken));
+    // Which page / opens (Settings), so the first paint is already the right page.
+    const html = injectToken(fs.readFileSync(indexHtml, 'utf8'), uiToken).replace('</head>', `    <meta name="hub-landing" content="${landingPage(db)}" />\n  </head>`);
+    return c.html(html);
   };
   app.get('/', page);
   app.get('/index.html', page);

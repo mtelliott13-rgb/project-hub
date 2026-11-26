@@ -10,6 +10,7 @@ import { ProjectPage } from './ProjectPage.tsx';
 import { Link, route, usePath } from './router.tsx';
 import { PrimaryButton } from './ui.tsx';
 import { HomePage } from './home/HomePage.tsx';
+import { TodayPage } from './today/TodayPage.tsx';
 import { Plus, User } from 'lucide-react';
 import { Switcher, SwitcherButton } from './Switcher.tsx';
 
@@ -57,12 +58,13 @@ export function App() {
   const inbox = useQuery({ queryKey: ['inbox'], queryFn: fetchInbox }).data;
   const waiting = inbox ? inbox.links.length + inbox.sessions.length + inbox.chats.length : 0;
   useEffect(() => {
-    const names = { ideas: 'Ideas', inbox: 'Inbox', settings: 'Settings' } as Record<string, string>;
+    const names = { today: 'Today', ideas: 'Ideas', inbox: 'Inbox', settings: 'Settings' } as Record<string, string>;
     document.title = names[here.page] ? `${names[here.page]} · Project Hub` : 'Project Hub';
   }, [here.page]);
 
   const tabs = [
-    { to: '/', label: 'Projects', on: here.page === 'home' || here.page === 'project' },
+    { to: '/today', label: 'Today', on: here.page === 'today' },
+    { to: '/projects', label: 'Projects', on: here.page === 'home' || here.page === 'project' },
     { to: '/inbox', label: 'Inbox', on: here.page === 'inbox', count: waiting },
     { to: '/ideas', label: 'Ideas', on: here.page === 'ideas' },
     { to: '/settings', label: 'Settings', on: here.page === 'settings' },
@@ -121,6 +123,7 @@ export function App() {
             {status.text}
           </p>
         )}
+        {here.page === 'today' && <TodayPage run={run} />}
         {here.page === 'home' && <HomePage run={run} />}
         {here.page === 'project' && <ProjectPage slug={here.slug} run={run} />}
         {here.page === 'ideas' && <IdeasPage />}

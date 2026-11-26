@@ -3,7 +3,7 @@
 // hub's actions and pages. Enter opens the page; ⌘Enter on a project runs its Resume.
 import { useQuery } from '@tanstack/react-query';
 import { Command } from 'cmdk';
-import { Inbox, LayoutGrid, Lightbulb, Play, Plus, Search, Settings, type LucideIcon } from 'lucide-react';
+import { CalendarDays, Inbox, LayoutGrid, Lightbulb, Play, Plus, Search, Settings, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { sortProjects } from '../../src/server/activity.ts';
 import { fetchProjects } from './api.ts';
@@ -15,7 +15,8 @@ import { navigate } from './router.tsx';
 import { ago, Kbd, PingDot, ProjectChip } from './ui.tsx';
 
 const PAGES: { to: string; label: string; Icon: LucideIcon }[] = [
-  { to: '/', label: 'Go to Projects', Icon: LayoutGrid },
+  { to: '/today', label: 'Go to Today', Icon: CalendarDays },
+  { to: '/projects', label: 'Go to Projects', Icon: LayoutGrid },
   { to: '/inbox', label: 'Go to Inbox', Icon: Inbox },
   { to: '/ideas', label: 'Go to Ideas', Icon: Lightbulb },
   { to: '/settings', label: 'Go to Settings', Icon: Settings },

@@ -193,3 +193,19 @@ export const calendarEvents = sqliteTable(
 );
 
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
+
+// Tasks (Today page): reminders with no date. Completed ones stay until the
+// day is over (the page folds them into "Done today"), then drop off the page.
+export const tasks = sqliteTable(
+  'tasks',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    title: text('title').notNull(),
+    projectSlug: text('project_slug').references(() => projects.slug, { onDelete: 'set null' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('tasks_project_idx').on(t.projectSlug)],
+);
+
+export type Task = typeof tasks.$inferSelect;

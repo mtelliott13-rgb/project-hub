@@ -132,10 +132,14 @@ function Sky({ part }: { part: DayPart }) {
   );
 }
 
-function Welcome({ projects, stats, run }: { projects: ProjectDto[]; stats: HomeStats; run: Run }) {
+/**
+ * The welcome banner, shared by the home page and Today. `summary` replaces the
+ * running-sessions line; `pickUp={false}` leaves out the "Pick up where you left
+ * off" card (Today shows it further down).
+ */
+export function Welcome({ projects, stats, run, summary, pickUp = true }: { projects: ProjectDto[]; stats: HomeStats; run: Run; summary?: string; pickUp?: boolean }) {
   const now = new Date();
   const part = dayPart(now.getHours());
-  const pick = newestPickUp(projects);
   const date = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   const sessions = `${stats.running} session${stats.running === 1 ? '' : 's'}`;
   return (
@@ -149,36 +153,51 @@ function Welcome({ projects, stats, run }: { projects: ProjectDto[]; stats: Home
       <div className="relative min-w-0 flex-[1_1_320px]">
         <p className="text-tiny font-semibold tracking-[0.08em] text-[#4b5260] uppercase">{date}</p>
         <h1 className="mt-1 text-[28px] leading-tight font-bold">{GREETING[part]}</h1>
-        <p className="mt-1 text-[14px] text-[#4b5260]">
-          {stats.running === 0
-            ? 'Nothing running right now.'
-            : `${sessions} running${stats.idle ? ` (${stats.idle} idle)` : ''} across ${stats.runningProjects} project${stats.runningProjects === 1 ? '' : 's'}.`}
+        <p className="mt-1 text-[14px] text-[#4b5260]" data-testid="welcome-summary">
+          {summary ??
+            (stats.running === 0
+              ? 'Nothing running right now.'
+              : `${sessions} running${stats.idle ? ` (${stats.idle} idle)` : ''} across ${stats.runningProjects} project${stats.runningProjects === 1 ? '' : 's'}.`)}
         </p>
       </div>
-      <div className="relative w-full rounded-card bg-white/95 p-4 text-[#1F2329] shadow-lift sm:w-auto sm:min-w-[340px] sm:flex-[0_1_400px]">
-        <p className="text-tiny font-semibold tracking-[0.08em] text-[#646A73] uppercase">Pick up where you left off</p>
-        {pick ? (
-          <div className="mt-2 flex items-center gap-3">
-            <ProjectChip slug={pick.project.slug} name={pick.project.name} size={36} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-semibold" data-testid="pickup-title">
-                {(pick.target.kind === 'chat' ? pick.target.chat.title : pick.target.session.title) ?? (pick.target.kind === 'chat' ? 'Untitled chat' : 'Untitled session')}
-              </p>
-              <p className="truncate text-meta text-[#646A73]">
-                {pick.target.kind === 'chat' ? 'Chat' : 'Session'} in {pick.project.name} · <span className="font-mono text-tiny">{ago(pick.at)}</span>
-              </p>
-            </div>
-            <PrimaryButton onClick={() => resume(pick.project, run)} title={`Resume in ${pick.project.name}`}>
-              <Play size={13} aria-hidden fill="currentColor" />
-              Resume
-              <CornerDownLeft size={12} aria-hidden className="opacity-80" />
-            </PrimaryButton>
-          </div>
-        ) : (
-          <p className="mt-2 text-[13px] text-[#646A73]">Nothing to reopen yet. Sessions and chats will show here.</p>
-        )}
-      </div>
+      {pickUp && (
+        <div className="relative w-full rounded-card bg-white/95 p-4 text-[#1F2329] shadow-lift sm:w-auto sm:min-w-[340px] sm:flex-[0_1_400px]">
+          <PickUp projects={projects} run={run} light />
+        </div>
+      )}
     </section>
+  );
+}
+
+/** "Pick up where you left off": the newest session or chat Resume could open (resumeTarget across projects). */
+export function PickUp({ projects, run, light }: { projects: ProjectDto[]; run: Run; light?: boolean }) {
+  const pick = newestPickUp(projects);
+  // On the banner's light card the colours are fixed; elsewhere they follow the theme.
+  const muted = light ? 'text-[#646A73]' : 'text-muted';
+  return (
+    <>
+      <p className={`text-tiny font-semibold tracking-[0.08em] uppercase ${muted}`}>Pick up where you left off</p>
+      {pick ? (
+        <div className="mt-2 flex items-center gap-3">
+          <ProjectChip slug={pick.project.slug} name={pick.project.name} size={36} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[14px] font-semibold" data-testid="pickup-title">
+              {(pick.target.kind === 'chat' ? pick.target.chat.title : pick.target.session.title) ?? (pick.target.kind === 'chat' ? 'Untitled chat' : 'Untitled session')}
+            </p>
+            <p className={`truncate text-meta ${muted}`}>
+              {pick.target.kind === 'chat' ? 'Chat' : 'Session'} in {pick.project.name} · <span className="font-mono text-tiny">{ago(pick.at)}</span>
+            </p>
+          </div>
+          <PrimaryButton onClick={() => resume(pick.project, run)} title={`Resume in ${pick.project.name}`}>
+            <Play size={13} aria-hidden fill="currentColor" />
+            Resume
+            <CornerDownLeft size={12} aria-hidden className="opacity-80" />
+          </PrimaryButton>
+        </div>
+      ) : (
+        <p className={`mt-2 text-[13px] ${muted}`}>Nothing to reopen yet. Sessions and chats will show here.</p>
+      )}
+    </>
   );
 }
 

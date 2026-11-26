@@ -13,7 +13,7 @@ I left off.
 
 I use it every day on my own projects. The screenshot and `sample-data/` use made-up content so my job applications, chats and notes stay private.
 
-**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 282 tests, CI on every push.
+**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 311 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 `~/.project-hub/`. Project data stays on this Mac. What goes out:
@@ -52,6 +52,10 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 
 ## What it does
 
+- **Today** (the page it opens on; Settings can switch to Projects): my Google
+  Calendar for today with a "now" line and the next 7 days, undated tasks with
+  "Add date" to make one an event, what to pick up, and what's running. Each
+  project page has an Upcoming section with its own events and tasks.
 - **Projects** defined in `~/.project-hub/projects.yaml` (folders, repos, GitHub
   names, keywords). You can edit them from the page, and the page keeps your
   comments and layout. Hand edits show up live.
@@ -149,7 +153,9 @@ pnpm sample       # starts the hub on the sample data
 
 Then open:
 
-- <http://127.0.0.1:4748/>: home page with the project cards
+- <http://127.0.0.1:4748/>: Today, with made-up events and tasks (no Google
+  connection; nothing leaves your Mac)
+- <http://127.0.0.1:4748/projects>: the project cards
 - <http://127.0.0.1:4748/p/career-hq>: Applications and Job feed
 - <http://127.0.0.1:4748/p/land-cover>: Toolkit and notes
 - <http://127.0.0.1:4748/ideas>: Ideas across all four projects

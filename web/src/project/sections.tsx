@@ -20,6 +20,7 @@ import { MonetizeSection } from './MonetizeSection.tsx';
 import { RepoSection } from './RepoSection.tsx';
 import { ToolkitSection } from './ToolkitSection.tsx';
 import { NotesSection } from './NotesSection.tsx';
+import { UpcomingSection, UpcomingSummary } from './UpcomingSection.tsx';
 import { listedSessions, SessionList, type Run } from './parts.tsx';
 import { useActivity } from './status.tsx';
 
@@ -138,6 +139,7 @@ export const SECTIONS: Section[] = [
     defaultOpen: false,
     summary: (p) => <CollectorSummary slug={p.slug} />,
   },
+  { id: 'upcoming', title: () => 'Upcoming', column: 'side', Component: UpcomingSection, defaultOpen: false, summary: (p) => <UpcomingSummary slug={p.slug} /> },
   { id: 'notes', title: () => 'Notes', column: 'side', Component: NotesSection, hint: 'Autosaves' },
   { id: 'links', title: () => 'Links', column: 'side', Component: LinksSection },
   { id: 'ideas', title: () => 'Ideas', column: 'side', Component: ProjectIdeas },

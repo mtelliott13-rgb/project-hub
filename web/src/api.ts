@@ -262,3 +262,25 @@ export const saveCalendarDefaults = (d: Partial<CalendarDefaults>) => hub<Calend
 export const disconnectConnector = (id: string) =>
   hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/disconnect`, { method: 'POST', body: {} });
 export const syncConnector = (id: string) => hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/sync`, { method: 'POST', body: {} });
+
+// Today page: cached calendar events, tasks and the landing page setting.
+import type { EventDto } from '../../src/server/calendar-routes.ts';
+import type { TaskDto } from '../../src/server/tasks.ts';
+import type { ConnectorState } from '../../src/server/connectors/types.ts';
+export type { EventDto, TaskDto };
+export type CalendarAnswer = {
+  timeZone: string;
+  google: { state: ConnectorState; account: string | null; lastSyncAt: string | null; error: string | null; canConnect: boolean; sample: boolean };
+  events: EventDto[];
+};
+export const fetchCalendar = (project?: string) => hub<CalendarAnswer>(`/api/calendar${project ? `?project=${project}` : ''}`);
+export const fetchTasks = (project?: string) => hub<TaskDto[]>(`/api/tasks${project ? `?project=${project}` : ''}`);
+export const createTask = (title: string, project?: string | null) => hub<{ task: TaskDto }>('/api/tasks', { method: 'POST', body: { title, project: project ?? null } });
+export const updateTask = (id: number, patch: { done?: boolean; project?: string | null; title?: string }) => hub<{ task: TaskDto }>(`/api/tasks/${id}`, { method: 'PUT', body: patch });
+export const deleteTask = (id: number) => hub<{ ok: true }>(`/api/tasks/${id}`, { method: 'DELETE' });
+export const scheduleTask = (id: number, when: { start: string; allDay?: boolean; end?: string | null }) =>
+  hub<{ event: EventDto; removedTask: TaskDto }>(`/api/tasks/${id}/schedule`, { method: 'POST', body: when });
+export const deleteEvent = (id: string) => hub<{ ok: true }>(`/api/calendar/events/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const syncGoogle = () => hub<{ status: ConnectorStatus }>('/api/connectors/google/sync', { method: 'POST', body: {} });
+export type Landing = 'today' | 'projects';
+export const saveLanding = (landing: Landing) => hub<{ landing: Landing }>('/api/settings/general', { method: 'PUT', body: { landing } });

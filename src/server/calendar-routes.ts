@@ -9,6 +9,10 @@ import { AuthRejected, ConnectorError } from './connectors/types.ts';
 import type { CalendarEvent } from './db/schema.ts';
 import type { Db } from './db/index.ts';
 import { scrub } from './secrets.ts';
+import { getSetting, setSetting } from './settings.ts';
+
+/** Which page / opens: Today (the default) or Projects. */
+export const landingPage = (db: Db): 'today' | 'projects' => (getSetting(db, 'general.landing') === 'projects' ? 'projects' : 'today');
 
 export type CalendarRouteDeps = { db: Db; calendar: CalendarService; connectors: ConnectorRegistry; origins: string[]; log?: (line: string) => void };
 
@@ -71,6 +75,15 @@ export function addCalendarRoutes(app: Hono, { db, calendar, connectors, origins
     } catch (e) {
       return calendarFailure(c, e, log);
     }
+  });
+
+  app.get('/api/settings/general', (c) => c.json({ landing: landingPage(db) }));
+  app.put('/api/settings/general', async (c) => {
+    if (!ownOrigin(c)) return refuse(c);
+    const body = (await c.req.json().catch(() => null)) as { landing?: unknown } | null;
+    if (body?.landing !== 'today' && body?.landing !== 'projects') return c.json({ error: 'landing is "today" or "projects"' }, 400);
+    setSetting(db, 'general.landing', body.landing);
+    return c.json({ landing: landingPage(db) });
   });
 
   app.get('/api/settings/calendar', (c) => c.json(getDefaults(db)));
