@@ -27,6 +27,8 @@ import { findQueueFiles, packetFile as findPacketFile, PACKET_FILES, queueRoot, 
 import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
 import { addConnectorRoutes } from './connectors/routes.ts';
+import { addCalendarRoutes } from './calendar-routes.ts';
+import type { CalendarService } from './calendar.ts';
 import type { ConnectorRegistry } from './connectors/registry.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
@@ -99,6 +101,8 @@ type AppDeps = DocDeps & {
   uvPath: string;
   /** Outside services (Google, Anthropic…), all off until connected. */
   connectors: ConnectorRegistry;
+  /** Cached Google Calendar events and createEvent (Today page). */
+  calendar: CalendarService;
 };
 
 /**
@@ -245,6 +249,7 @@ export function createApp(deps: AppDeps) {
   addChatRoutes(app, deps);
   addAgentRoutes(app, deps);
   addConnectorRoutes(app, deps.connectors, origins);
+  addCalendarRoutes(app, { db, calendar: deps.calendar, connectors: deps.connectors, origins });
   addApplicationRoutes(app, deps);
 
   // The folder picker.

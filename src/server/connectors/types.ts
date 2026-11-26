@@ -42,6 +42,8 @@ export type ConnectorStatus = {
   /** Whether Connect can be clicked now (its required fields are saved). */
   canConnect: boolean;
   canSync: boolean;
+  /** Whether a credentials file can be uploaded instead of typing the fields. */
+  acceptsFile: boolean;
   /** Set when the hub runs on sample data: the connector is a local stand-in and makes no requests. */
   sample?: boolean;
 };
@@ -73,7 +75,15 @@ export interface Connector {
   syncEveryMs?: number;
   /** Also sync once when the hub starts (if connected). */
   syncOnStart?: boolean;
-  connect(ctx: ConnectorContext): Promise<ConnectResult>;
+  connect(ctx: ConnectorContext, opts?: { returnTo?: string }): Promise<ConnectResult>;
+  /**
+   * For redirect (OAuth) connectors: finishes connecting when the service sends
+   * you back to /oauth/<id>/callback. Must check the one-time state itself.
+   * Errors may carry `returnTo` so you land back where you clicked Connect.
+   */
+  callback?(ctx: ConnectorContext, params: URLSearchParams): Promise<{ account: string | null; returnTo: string }>;
+  /** Reads a credentials file you upload (e.g. Google's client JSON) into field values; keeps nothing else. */
+  importFile?(json: unknown): Record<string, string>;
   /** Forgets what connecting obtained (tokens). Saved fields stay until you remove them. */
   disconnect(ctx: ConnectorContext): Promise<void>;
   /** Fetches fresh data. May return an updated account name. */

@@ -8,6 +8,10 @@ import { z } from 'zod';
 import type { ConnectorRegistry } from './registry.ts';
 import { ConnectorError } from './types.ts';
 
+/** Where Connect may send you back to after a sign-in: the hub's own pages only. */
+export const RETURN_PAGES = ['/settings#connections', '/today', '/'];
+const connectBody = z.object({ returnTo: z.enum(RETURN_PAGES as [string, ...string[]]).optional() }).strict();
+
 const fieldsBody = z.record(z.string().regex(/^[a-z0-9-]{1,40}$/), z.string().max(4096));
 
 export function addConnectorRoutes(app: Hono, registry: ConnectorRegistry, origins: string[]) {
@@ -52,8 +56,40 @@ export function addConnectorRoutes(app: Hono, registry: ConnectorRegistry, origi
 
   app.post(
     '/api/connectors/:id/connect',
-    write(async (c, id) => c.json(await registry.connect(id))),
+    write(async (c, id) => {
+      const parsed = connectBody.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) return c.json({ error: 'Unknown page to return to' }, 400);
+      return c.json(await registry.connect(id, parsed.data));
+    }),
   );
+
+  // A credentials file (e.g. Google's client JSON), read on the server and
+  // reduced to the connector's fields; the rest of the file is never kept.
+  app.post(
+    '/api/connectors/:id/import',
+    write(async (c, id) => {
+      const json = await c.req.json().catch(() => null);
+      if (json === null) return c.json({ error: "That file isn't JSON." }, 400);
+      return c.json(await registry.importFile(id, json));
+    }),
+  );
+
+  // OAuth: the service sends the browser back here with ?code&state. This is a
+  // top-level navigation from the service's site, so it can't carry the page
+  // token or the hub's Origin; the one-time state value (and PKCE) protect it
+  // instead, and the app-wide Host check still applies. It only ever redirects
+  // to one of the hub's own pages.
+  app.get('/oauth/:id/callback', async (c) => {
+    const id = c.req.param('id');
+    if (!known(id)) return c.text('Unknown connector', 404);
+    const { returnTo, error } = await registry.finishCallback(id, new URL(c.req.url).searchParams);
+    const page = RETURN_PAGES.includes(returnTo) ? returnTo : '/settings#connections';
+    const [pathPart, hash = ''] = page.split('#');
+    const target = `${pathPart}?connected=${encodeURIComponent(id)}&ok=${error ? '0' : '1'}${hash ? `#${hash}` : ''}`;
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    return c.redirect(target, 302);
+  });
 
   app.post(
     '/api/connectors/:id/disconnect',

@@ -176,6 +176,46 @@ Optional pieces, each separate:
 
 Each install has a matching `uninstall`.
 
+## Connect Google Calendar
+
+The Today page reads your primary calendar and adds the reminders you confirm.
+It uses your own Google Cloud OAuth client, so nothing goes through anyone
+else's servers. It takes about ten minutes, once.
+
+1. **Create a project.** In the [Google Cloud console](https://console.cloud.google.com/),
+   use the project picker at the top to create a new project, e.g. "Project Hub".
+2. **Turn on the Calendar API.** Go to APIs & Services → Library, search for
+   **Google Calendar API**, open it and click **Enable**.
+3. **Set up the consent screen.** Open **Google Auth platform** (search for it
+   at the top). If it asks, click **Get started**. Fill in the app name and your
+   support email, choose **External** as the audience, add your contact email
+   and click **Create**.
+4. **Add yourself as a test user.** In Google Auth platform → **Audience**, under
+   **Test users**, click **Add users**, enter your Google address and save.
+5. **Create the client.** In Google Auth platform → **Clients**, click **Create
+   client**. Choose **Desktop app** as the application type, give it a name and
+   click **Create**. In the dialog that follows, download the JSON. Google shows
+   the client secret only at this point. If you miss it, add a new secret on the
+   client's page.
+6. **Connect.** In the hub, open Settings → Connections → Google Calendar.
+   - Click **Upload client JSON** and choose the downloaded file. The hub keeps
+     only the client ID, and the secret goes to the macOS Keychain, so you can
+     delete the file afterwards.
+   - Click **Connect**, sign in and allow calendar access. Google says the app
+     isn't verified, because it's your own; continue anyway. You land back in
+     the hub, connected.
+
+The hub asks only for `calendar.events` (see and edit events), redirects back
+to itself on `127.0.0.1`, and uses PKCE and a one-time state value. Your sign-in
+token is kept in the Keychain.
+
+**Reconnect every 7 days.** While the app's publishing status is **Testing**,
+which is where it stays unless you verify a domain with Google, Google expires
+its sign-ins after 7 days. When that happens the Agenda card on the Today page
+says **Needs reconnect**, with a **Reconnect** button that takes you straight
+through Google's sign-in and back. Your cached events stay on the page until
+then. The hub doesn't retry on its own.
+
 ## Development
 
 ```sh

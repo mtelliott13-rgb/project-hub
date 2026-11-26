@@ -102,6 +102,7 @@ export function connectorRegistry(deps: RegistryDeps) {
       fields,
       canConnect: c.required.every((k) => fields.find((f) => f.key === k)?.saved),
       canSync: !!c.sync && ACTIVE_STATES.includes(state),
+      acceptsFile: !!c.importFile,
       ...(deps.sample && { sample: true }),
     };
   }
@@ -134,12 +135,13 @@ export function connectorRegistry(deps: RegistryDeps) {
     return status(id);
   }
 
-  async function connect(id: string): Promise<{ status: ConnectorStatus; redirect?: string }> {
+  async function connect(id: string, opts: { returnTo?: string } = {}): Promise<{ status: ConnectorStatus; redirect?: string }> {
     const c = get(id);
+    if (deps.sample) throw new ConnectorError('sample', 'This is the sample data: connectors stay off and make no outside requests.');
     const s = await status(id);
     if (!s.canConnect) throw new ConnectorError('not-ready', `Save ${c.required.map((k) => c.fields.find((f) => f.key === k)?.label ?? k).join(' and ')} first`);
     try {
-      const r = await c.connect(ctx(c));
+      const r = await c.connect(ctx(c), opts);
       if (r.kind === 'redirect') return { status: s, redirect: r.url };
       await markConnected(id, r.account);
       return { status: await status(id) };
@@ -148,6 +150,33 @@ export function connectorRegistry(deps: RegistryDeps) {
       log(`Connector ${id}: connect failed: ${message}`);
       throw new ConnectorError('connect-failed', message);
     }
+  }
+
+  /**
+   * The service sent you back (OAuth). Returns where to send the browser next,
+   * and a short secret-free message if it failed (also kept as the connector's error).
+   */
+  async function finishCallback(id: string, params: URLSearchParams): Promise<{ returnTo: string; error: string | null }> {
+    const c = get(id);
+    if (!c.callback || deps.sample) return { returnTo: '/settings#connections', error: 'Not expected' };
+    try {
+      const r = await c.callback(ctx(c), params);
+      await markConnected(id, r.account);
+      return { returnTo: r.returnTo, error: null };
+    } catch (e) {
+      const { message } = await safeMessage(c, e);
+      const returnTo = (e as { returnTo?: unknown }).returnTo;
+      // Keep the current state (a failed reconnect still needs reconnecting), with the reason.
+      write(id, { lastError: message });
+      log(`Connector ${id}: sign-in failed: ${message}`);
+      return { returnTo: typeof returnTo === 'string' ? returnTo : '/settings#connections', error: message };
+    }
+  }
+
+  async function importFile(id: string, json: unknown) {
+    const c = get(id);
+    if (!c.importFile) throw new ConnectorError('bad-field', `${c.name} doesn't take a file`);
+    return saveFields(id, c.importFile(json));
   }
 
   /** Records a finished connect (also from an OAuth callback), then syncs once. */
@@ -216,6 +245,8 @@ export function connectorRegistry(deps: RegistryDeps) {
     saveFields,
     removeField,
     connect,
+    finishCallback,
+    importFile,
     markConnected,
     markNeedsReconnect,
     disconnect,

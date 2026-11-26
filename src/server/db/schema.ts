@@ -164,3 +164,32 @@ export const settings = sqliteTable('settings', {
   value: text('value', { mode: 'json' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
+
+// Calendar events from the Google connector, today through 14 days out,
+// replaced on every sync. Only what the Today page shows: never descriptions,
+// locations or guests. Times are kept as given (RFC 3339, or YYYY-MM-DD for
+// all-day events) plus epoch ms for sorting, in the Mac's time zone.
+export const calendarEvents = sqliteTable(
+  'calendar_events',
+  {
+    // Google's event id (one row per occurrence of a repeating event).
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    allDay: integer('all_day', { mode: 'boolean' }).notNull(),
+    start: text('start').notNull(),
+    end: text('end').notNull(),
+    startsAt: integer('starts_at', { mode: 'timestamp_ms' }).notNull(),
+    endsAt: integer('ends_at', { mode: 'timestamp_ms' }).notNull(),
+    // Opens the event in Google Calendar.
+    htmlLink: text('html_link'),
+    // From the event's extendedProperties.private.hubProject (set when the hub creates it).
+    projectSlug: text('project_slug'),
+    recurring: integer('recurring', { mode: 'boolean' }).notNull().default(false),
+    // The hub made it (extendedProperties.private.hubCreated); only these can be deleted from the hub (Undo).
+    createdByHub: integer('created_by_hub', { mode: 'boolean' }).notNull().default(false),
+    syncedAt: integer('synced_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('calendar_events_start_idx').on(t.startsAt)],
+);
+
+export type CalendarEvent = typeof calendarEvents.$inferSelect;

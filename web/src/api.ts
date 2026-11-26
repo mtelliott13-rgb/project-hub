@@ -252,8 +252,13 @@ export const saveConnectorFields = (id: string, values: Record<string, string>) 
   hub<ConnectorStatus>(`/api/connectors/${id}/fields`, { method: 'PUT', body: values });
 export const removeConnectorField = (id: string, key: string) =>
   hub<ConnectorStatus>(`/api/connectors/${id}/fields/${key}`, { method: 'DELETE' });
-export const connectConnector = (id: string) =>
-  hub<{ status: ConnectorStatus; redirect?: string }>(`/api/connectors/${id}/connect`, { method: 'POST', body: {} });
+export const connectConnector = (id: string, returnTo?: '/settings#connections' | '/today' | '/') =>
+  hub<{ status: ConnectorStatus; redirect?: string }>(`/api/connectors/${id}/connect`, { method: 'POST', body: returnTo ? { returnTo } : {} });
+/** Sends a credentials file's JSON; the server keeps only the connector's fields from it. */
+export const importConnectorFile = (id: string, json: unknown) => hub<ConnectorStatus>(`/api/connectors/${id}/import`, { method: 'POST', body: json });
+export type CalendarDefaults = { eventMinutes: number; reminderMinutes: number; allDayReminderMinutes: number };
+export const fetchCalendarDefaults = () => hub<CalendarDefaults>('/api/settings/calendar');
+export const saveCalendarDefaults = (d: Partial<CalendarDefaults>) => hub<CalendarDefaults>('/api/settings/calendar', { method: 'PUT', body: d });
 export const disconnectConnector = (id: string) =>
   hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/disconnect`, { method: 'POST', body: {} });
 export const syncConnector = (id: string) => hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/sync`, { method: 'POST', body: {} });
