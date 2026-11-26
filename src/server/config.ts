@@ -16,6 +16,10 @@ export const BACKUP_DIR = path.join(HUB_DIR, 'backups');
 // PROJECT_HUB_SKIP_CLAUDE=1 (set by `pnpm sample`) stops the hub reading this
 // Mac's Claude Code sessions, so a sample run shows only the sample data.
 export const SKIP_CLAUDE = process.env.PROJECT_HUB_SKIP_CLAUDE === '1';
+// PROJECT_HUB_SAMPLE=1 (also set by `pnpm sample`): connectors are local
+// stand-ins that make no outside requests, and secrets stay in memory instead
+// of the Keychain, so a sample run never touches your real accounts.
+export const SAMPLE = process.env.PROJECT_HUB_SAMPLE === '1';
 
 // Bound to loopback only, so the hub is reachable only from this machine.
 export const HOST = '127.0.0.1';

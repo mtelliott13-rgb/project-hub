@@ -137,3 +137,30 @@ export const chats = sqliteTable(
 );
 
 export type Chat = typeof chats.$inferSelect;
+
+// Connectors (Today page): outside services the hub can talk to, all off until
+// you click Connect. Only status lives here. Secrets (refresh tokens, client
+// secrets, API keys) are in the macOS Keychain (src/server/secrets.ts), never
+// in this database.
+export const connectors = sqliteTable('connectors', {
+  id: text('id').primaryKey(),
+  // 'connected' and 'needs-reconnect' come from connecting; 'error' is a failed
+  // sync that will be tried again on schedule. No row means not set up.
+  state: text('state', { enum: ['not-set-up', 'connected', 'needs-reconnect', 'error'] }).notNull(),
+  // What the service calls the account (e.g. the calendar's address); shown on the page.
+  account: text('account'),
+  lastSyncAt: integer('last_sync_at', { mode: 'timestamp_ms' }),
+  // A short, secret-free reason for 'error' or 'needs-reconnect'.
+  lastError: text('last_error'),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+export type ConnectorRow = typeof connectors.$inferSelect;
+
+// Hub preferences set on the Settings page, and connectors' non-secret fields
+// (e.g. a Google client ID), as key -> JSON value.
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});

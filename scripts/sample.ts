@@ -32,7 +32,7 @@ db.$client.close();
 const port = process.env.PROJECT_HUB_PORT ?? '4748';
 const child = spawn(process.execPath, [path.join(root, 'src/server/index.ts')], {
   stdio: 'inherit',
-  env: { ...process.env, PROJECT_HUB_DIR: sample, PROJECT_HUB_PORT: port, PROJECT_HUB_SKIP_CLAUDE: '1' },
+  env: { ...process.env, PROJECT_HUB_DIR: sample, PROJECT_HUB_PORT: port, PROJECT_HUB_SKIP_CLAUDE: '1', PROJECT_HUB_SAMPLE: '1' },
 });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => child.kill(sig));
 child.on('exit', (code) => process.exit(code ?? 0));

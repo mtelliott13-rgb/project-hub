@@ -26,6 +26,8 @@ import { addApplicationRoutes } from './application-routes.ts';
 import { findQueueFiles, packetFile as findPacketFile, PACKET_FILES, queueRoot, queueSummary, readQueue } from './applications.ts';
 import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
+import { addConnectorRoutes } from './connectors/routes.ts';
+import type { ConnectorRegistry } from './connectors/registry.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
@@ -95,6 +97,8 @@ type AppDeps = DocDeps & {
   agentToken: string;
   /** Full path to uv, for Career HQ's status command (queue-status.ts). */
   uvPath: string;
+  /** Outside services (Google, Anthropic…), all off until connected. */
+  connectors: ConnectorRegistry;
 };
 
 /**
@@ -240,6 +244,7 @@ export function createApp(deps: AppDeps) {
   addLinkRoutes(app, deps);
   addChatRoutes(app, deps);
   addAgentRoutes(app, deps);
+  addConnectorRoutes(app, deps.connectors, origins);
   addApplicationRoutes(app, deps);
 
   // The folder picker.

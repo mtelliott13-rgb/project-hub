@@ -13,7 +13,7 @@ I left off.
 
 I use it every day on my own projects. The screenshot and `sample-data/` use made-up content so my job applications, chats and notes stay private.
 
-**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 263 tests, CI on every push.
+**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 282 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 `~/.project-hub/`. Project data stays on this Mac. What goes out:
@@ -25,6 +25,25 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
   sends the project files it reads to Claude and may search the web. Resume and
   the launch buttons open Claude Code or the Claude app, which then work as
   usual.
+- **Google Calendar, only after I connect it** (Settings → Connections; off by
+  default). Connecting opens Google's sign-in page, and Google sends the hub a
+  code it trades for tokens at `oauth2.googleapis.com`. Then:
+  - Every 10 minutes, at start and on "Sync now", it reads events on my primary
+    calendar from today through 14 days out.
+  - When I confirm a reminder, it creates that one event.
+  - Undo deletes that one event.
+  - If Google rejects the sign-in, it stops and waits for Reconnect.
+  - It keeps only each event's title, times, link and linked project, never
+    descriptions, locations or guests.
+- **Quick-add's parser, only when I press Enter in the quick-add bar** (or
+  click a note's "Add to calendar?"). It sends the text I typed, today's date
+  and time, my time zone and my project names and slugs, and nothing else.
+  Where it goes depends on the parser chosen in Settings:
+  - **Claude Code** (the default) sends it to Claude through `claude -p`, on my
+    Claude plan.
+  - **Anthropic API** sends it to `api.anthropic.com` with my own API key.
+    Connecting that key sends it once to check it.
+  - **None** sends nothing.
 
 > **macOS only.** It opens sessions in Terminal.app and files in VS Code, starts
 > at login through launchd, and learns about Claude Code sessions through Claude
@@ -73,6 +92,14 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
   Writes and launches also must come from the hub's own origin. Claude Code
   hooks, the Chrome extension and the MCP server each have their own separate
   credential.
+- **Secrets in the Keychain.** Google sign-in tokens, the Google client secret
+  and the Anthropic API key are stored in the macOS Keychain (service
+  `project-hub`). They are never written to SQLite, `~/.project-hub/`, logs,
+  error messages or any answer to the page, which only ever sees "connected" or
+  "not set up". They never go on a command line either: the hub sends them to
+  `security` on its stdin. Every connector is off until connected, and every
+  change (saving a key, connecting, adding an event or task) must come from the
+  hub's own page.
 - **No prompt text.** Hook payloads pass through a schema that drops anything
   unknown. The hub stores session ids, folders, titles and times, never what
   I typed.
@@ -155,7 +182,15 @@ Each install has a matching `uninstall`.
 pnpm dev          # server with reload + Vite on http://127.0.0.1:5173
 pnpm test         # Vitest
 pnpm typecheck
+pnpm check:secrets  # staged lines: secrets, real emails, my own paths and data
 ```
+
+`pnpm check:secrets` runs before every commit (and over every tracked file in
+CI with `--all`). It flags Google client secrets and tokens, Anthropic keys,
+private keys and email addresses outside the example domains. On my Mac it also
+flags my own git email and home path, and, in staged lines, the names of my
+real projects and the titles of my real events and tasks. It reads those from
+`~/.project-hub` when it runs, so the script itself holds none of them.
 
 Stack: a Hono server running as plain TypeScript on Node (no build step for the
 server), SQLite through Drizzle, React with Vite and Tailwind. `SPEC.md` is the

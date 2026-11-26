@@ -1,9 +1,10 @@
-// Settings (SPEC.md, Phase 7): which hub project each Claude Project's chats
+// Settings: connections to outside services (connectors), and (SPEC.md, Phase 7) which hub project each Claude Project's chats
 // file into, the claude.ai data-export import, and the Chrome extension.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchClaudeProjects, fetchProjects, importExport, mapClaudeProject } from './api.ts';
 import { ago } from './ui.tsx';
+import { ConnectionsSection } from './Connections.tsx';
 
 const inputClass = 'rounded-md border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-950';
 const card = 'rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900';
@@ -40,6 +41,8 @@ export function SettingsPage() {
           {note.text}
         </p>
       )}
+
+      <ConnectionsSection />
 
       <section className={card}>
         <h2 className={h2}>Claude Projects</h2>

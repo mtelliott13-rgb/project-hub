@@ -242,3 +242,18 @@ export type ShownFeed = Feed & { others: string[] };
 export type FeedResponse = ShownFeed | { file: string; error: string };
 export const feedOk = (r: FeedResponse | undefined): r is ShownFeed => !!r && 'postings' in r;
 export const fetchJobFeed = (slug: string) => hub<FeedResponse>(`/api/projects/${slug}/job-feed`);
+
+// Connectors (Settings → Connections). The page only ever gets status: secret
+// fields come back as `saved: true/false`, never their values.
+export type { ConnectorStatus, FieldStatus } from '../../src/server/connectors/types.ts';
+import type { ConnectorStatus } from '../../src/server/connectors/types.ts';
+export const fetchConnectors = () => hub<ConnectorStatus[]>('/api/connectors');
+export const saveConnectorFields = (id: string, values: Record<string, string>) =>
+  hub<ConnectorStatus>(`/api/connectors/${id}/fields`, { method: 'PUT', body: values });
+export const removeConnectorField = (id: string, key: string) =>
+  hub<ConnectorStatus>(`/api/connectors/${id}/fields/${key}`, { method: 'DELETE' });
+export const connectConnector = (id: string) =>
+  hub<{ status: ConnectorStatus; redirect?: string }>(`/api/connectors/${id}/connect`, { method: 'POST', body: {} });
+export const disconnectConnector = (id: string) =>
+  hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/disconnect`, { method: 'POST', body: {} });
+export const syncConnector = (id: string) => hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/sync`, { method: 'POST', body: {} });
