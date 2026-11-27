@@ -72,6 +72,9 @@ export function localPersonal(hubDir = process.env.PROJECT_HUB_DIR ?? path.join(
   } catch {}
   const user = os.userInfo().username;
   if (user && user.length >= 3) everywhere.push(`/Users/${user}/`, `/home/${user}/`);
+  // This Mac's time zone says roughly where you live; use an unrelated one in tests and samples.
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (zone && zone.includes('/') && !/^(UTC|Etc\/)/.test(zone)) everywhere.push(zone);
 
   // Real project names and slugs, minus the ones the sample data uses on purpose.
   const sampleWords = new Set<string>();
