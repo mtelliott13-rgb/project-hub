@@ -9,6 +9,9 @@ import {
   disconnectConnector,
   fetchCalendarDefaults,
   fetchConnectors,
+  fetchQuickAddBackend,
+  saveQuickAddBackend,
+  type Backend,
   importConnectorFile,
   saveCalendarDefaults,
   type CalendarDefaults,
@@ -369,6 +372,64 @@ export function CalendarDefaultsSection() {
           )}
         </form>
       </Card>
+    </section>
+  );
+}
+
+/** Settings → Quick-add parser: which backend reads what you type, and exactly what each one sends. */
+export function QuickAddParserSection() {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ['quick-add-backend'], queryFn: fetchQuickAddBackend });
+  const save = useMutation({ mutationFn: saveQuickAddBackend, onSuccess: (r) => queryClient.setQueryData(['quick-add-backend'], r) });
+  const options: { v: Backend; label: string; sends: string }[] = [
+    {
+      v: 'claude-cli',
+      label: 'Claude Code (default)',
+      sends:
+        'Runs claude -p on this Mac, with a small fast model, no tools and no saved session, on your Claude plan. When you press Enter in the quick-add bar it sends to Claude (Anthropic): the reminder text, today\'s date and time, your time zone, and your project names and slugs. Nothing else.',
+    },
+    {
+      v: 'anthropic',
+      label: 'Anthropic API',
+      sends:
+        'The same four things, sent to api.anthropic.com with your own API key (Connections → Anthropic API), using Claude Haiku. Billed to that key.',
+    },
+    { v: 'none', label: 'None', sends: 'Sends nothing. A date reader on this Mac (chrono-node) fills in the form for you to check.' },
+  ];
+  if (!q.data) return null;
+  return (
+    <section aria-labelledby="parser-h" className="space-y-3" data-testid="quick-add-parser">
+      <div>
+        <h2 id="parser-h" className="text-[15px] font-semibold text-ink">
+          Quick-add parser
+        </h2>
+        <p className="mt-0.5 text-[13px] text-muted">
+          Reads what you type in the Today page's quick-add bar. It only reads: you always see a preview and confirm before anything is added. If it fails, takes over 30
+          seconds or isn't sure, the form opens instead, filled in from what was understood.
+        </p>
+      </div>
+      <div role="radiogroup" aria-labelledby="parser-h" className="space-y-2">
+        {options.map((o) => (
+          <label
+            key={o.v}
+            className={`flex cursor-pointer items-start gap-3 rounded-card border bg-card p-3 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent ${q.data.backend === o.v ? 'border-accent' : 'border-line'}`}
+          >
+            <input type="radio" name="parser" className="mt-1 accent-[var(--color-accent)]" checked={q.data.backend === o.v} disabled={save.isPending} onChange={() => save.mutate(o.v)} />
+            <span>
+              <span className="block font-medium text-ink">{o.label}</span>
+              <span className="mt-0.5 block text-[12px] text-muted">
+                <span className="font-medium text-ink">Sends: </span>
+                {o.sends}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {save.error && (
+        <p role="alert" className="text-[13px] text-red-700 dark:text-red-300">
+          {save.error.message}
+        </p>
+      )}
     </section>
   );
 }

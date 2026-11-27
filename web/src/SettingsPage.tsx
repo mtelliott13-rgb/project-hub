@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { fetchClaudeProjects, fetchProjects, importExport, mapClaudeProject, saveLanding, type Landing } from './api.ts';
 import { getLanding, setLanding } from './router.tsx';
 import { ago } from './ui.tsx';
-import { CalendarDefaultsSection, ConnectionsSection } from './Connections.tsx';
+import { CalendarDefaultsSection, ConnectionsSection, QuickAddParserSection } from './Connections.tsx';
 
 const inputClass = 'rounded-md border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-950';
 const card = 'rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900';
@@ -50,6 +50,7 @@ export function SettingsPage() {
       <LandingSection />
       <ConnectionsSection />
       <CalendarDefaultsSection />
+      <QuickAddParserSection />
 
       <section className={card}>
         <h2 className={h2}>Claude Projects</h2>

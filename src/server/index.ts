@@ -49,6 +49,7 @@ import { googleConnector } from './connectors/google.ts';
 import { googleCalendarBackend, sampleCalendarBackend } from './connectors/google-calendar.ts';
 import { calendarService, type CalendarService } from './calendar.ts';
 import { taskService } from './tasks.ts';
+import { execaRunner } from './quick-add.ts';
 import { keychainSecrets, memorySecrets, scrub } from './secrets.ts';
 
 const TITLE_REFRESH_MS = 5 * 60_000;
@@ -230,6 +231,9 @@ const app = createApp({
   connectors,
   calendar,
   tasks: taskService(db, undefined, () => feed.notify()),
+  // Quick-add's `claude -p` runs are left out of the running-sessions poll, like Generate's.
+  quickAddRunner: execaRunner(generatePids),
+  sample: SAMPLE,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);

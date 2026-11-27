@@ -14,6 +14,7 @@ import { memorySecrets } from '../src/server/secrets.ts';
 import { calendarService, type CalendarBackend } from '../src/server/calendar.ts';
 import { sampleCalendarBackend } from '../src/server/connectors/google-calendar.ts';
 import { taskService } from '../src/server/tasks.ts';
+import type { Runner } from '../src/server/quick-add.ts';
 
 /** The hub's own origin in tests; requests go to full URLs so the Host check sees it. */
 export const HUB = 'http://127.0.0.1:4747';
@@ -32,7 +33,10 @@ export const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
  * a projects.yaml, notes and ideas next to the test database, and a Generate
  * that returns a canned draft.
  */
-export function testDeps(db: Db, opts: { connectors?: Connector[]; fetch?: typeof fetch; calendarBackend?: (registry: ConnectorRegistry) => CalendarBackend; now?: () => Date } = {}) {
+export function testDeps(
+  db: Db,
+  opts: { connectors?: Connector[]; fetch?: typeof fetch; calendarBackend?: (registry: ConnectorRegistry) => CalendarBackend; now?: () => Date; quickAddRunner?: Runner } = {},
+) {
   // Connectors never reach the network in tests: unless a test passes its own,
   // fetch throws, and secrets live in memory.
   const secrets = memorySecrets();
@@ -129,6 +133,12 @@ export function testDeps(db: Db, opts: { connectors?: Connector[]; fetch?: typeo
       connectors,
       calendar,
       tasks,
+      // Tests never run Claude: the parser's command fails unless a test passes its own.
+      quickAddRunner:
+        opts.quickAddRunner ??
+        (async () => {
+          throw new Error('tests never run claude');
+        }),
     },
   };
 }

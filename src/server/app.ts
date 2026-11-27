@@ -30,6 +30,9 @@ import { addConnectorRoutes } from './connectors/routes.ts';
 import { addCalendarRoutes, landingPage } from './calendar-routes.ts';
 import type { CalendarService } from './calendar.ts';
 import { addTaskRoutes, type TaskService } from './tasks.ts';
+import { addQuickAddRoutes, addReminderRoutes } from './reminders.ts';
+import { getDefaults, localTimeZone } from './calendar.ts';
+import type { Runner } from './quick-add.ts';
 import type { ConnectorRegistry } from './connectors/registry.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
@@ -106,6 +109,10 @@ type AppDeps = DocDeps & {
   calendar: CalendarService;
   /** Undated tasks (Today page). */
   tasks: TaskService;
+  /** Runs `claude -p` for the quick-add parser (tests pass a fake). */
+  quickAddRunner: Runner;
+  /** Sample data: the quick-add parser defaults to None. */
+  sample?: boolean;
 };
 
 /**
@@ -254,6 +261,20 @@ export function createApp(deps: AppDeps) {
   addConnectorRoutes(app, deps.connectors, origins);
   addCalendarRoutes(app, { db, calendar: deps.calendar, connectors: deps.connectors, origins });
   addTaskRoutes(app, { tasks: deps.tasks, calendar: deps.calendar, origins });
+  addReminderRoutes(app, { calendar: deps.calendar, tasks: deps.tasks, origins });
+  addQuickAddRoutes(app, {
+    db,
+    origins,
+    sample: deps.sample,
+    quickAdd: {
+      // Only project names and slugs, plus the date, time and zone, go to the parser.
+      context: () => ({ now: new Date(), timeZone: localTimeZone(), projects: listAllProjects(db).filter((p) => !p.archived).map((p) => ({ slug: p.slug, name: p.name })) }),
+      defaults: () => getDefaults(db),
+      registry: deps.connectors,
+      run: deps.quickAddRunner,
+      log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    },
+  });
   addApplicationRoutes(app, deps);
 
   // The folder picker.

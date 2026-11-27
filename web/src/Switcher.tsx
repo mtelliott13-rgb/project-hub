@@ -3,7 +3,7 @@
 // hub's actions and pages. Enter opens the page; ⌘Enter on a project runs its Resume.
 import { useQuery } from '@tanstack/react-query';
 import { Command } from 'cmdk';
-import { CalendarDays, Inbox, LayoutGrid, Lightbulb, Play, Plus, Search, Settings, type LucideIcon } from 'lucide-react';
+import { BellPlus, CalendarDays, Inbox, LayoutGrid, Lightbulb, Play, Plus, Search, Settings, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { sortProjects } from '../../src/server/activity.ts';
 import { fetchProjects } from './api.ts';
@@ -12,6 +12,7 @@ import { newestPickUp } from './home/model.ts';
 import { openProject, resume, type Run } from './project/parts.tsx';
 import { StatusBadges, useActivity } from './project/status.tsx';
 import { navigate } from './router.tsx';
+import { requestQuickAddFocus } from './today/focus.ts';
 import { ago, Kbd, PingDot, ProjectChip } from './ui.tsx';
 
 const PAGES: { to: string; label: string; Icon: LucideIcon }[] = [
@@ -159,6 +160,20 @@ export function Switcher({ run, open, setOpen, onNewProject }: { run: Run; open:
               </span>
             </Command.Item>
           )}
+          <Command.Item
+            value="action:add-reminder"
+            keywords={['add', 'reminder', 'task', 'event', 'calendar', 'quick add']}
+            onSelect={() => {
+              go('/today');
+              requestQuickAddFocus();
+            }}
+            className={itemClass}
+          >
+            <span className="inline-flex size-[26px] items-center justify-center rounded-[8px] bg-accent/10 text-accent">
+              <BellPlus size={14} aria-hidden />
+            </span>
+            Add reminder
+          </Command.Item>
           {onNewProject && (
             <Command.Item
               value="action:new-project"

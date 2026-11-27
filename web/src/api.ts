@@ -284,3 +284,12 @@ export const deleteEvent = (id: string) => hub<{ ok: true }>(`/api/calendar/even
 export const syncGoogle = () => hub<{ status: ConnectorStatus }>('/api/connectors/google/sync', { method: 'POST', body: {} });
 export type Landing = 'today' | 'projects';
 export const saveLanding = (landing: Landing) => hub<{ landing: Landing }>('/api/settings/general', { method: 'PUT', body: { landing } });
+
+// Quick-add: parse (creates nothing), then createReminder once you confirm.
+import type { Backend, Draft as ReminderDraft, ParseResult } from '../../src/server/quick-add.ts';
+export type { Backend, ReminderDraft, ParseResult };
+export const parseQuickAdd = (text: string) => hub<ParseResult>('/api/quick-add', { method: 'POST', body: { text } });
+export type CreatedDto = { kind: 'event'; event: EventDto } | { kind: 'task'; task: TaskDto };
+export const createReminder = (draft: Omit<ReminderDraft, 'kind'>) => hub<CreatedDto>('/api/reminders', { method: 'POST', body: draft });
+export const fetchQuickAddBackend = () => hub<{ backend: Backend }>('/api/settings/quick-add');
+export const saveQuickAddBackend = (backend: Backend) => hub<{ backend: Backend }>('/api/settings/quick-add', { method: 'PUT', body: { backend } });
