@@ -19,6 +19,7 @@ import {
   PROJECT_DOCS_DIR,
   PROJECTS_FILE,
   SKIP_CLAUDE,
+  SAMPLE,
   TOKEN_FILE,
   UI_TOKEN_FILE,
   AGENT_TOKEN_FILE,
@@ -42,6 +43,14 @@ import { macLauncher, type Launcher } from './launcher.ts';
 import { createProjectStore, watchFile } from './project-store.ts';
 import { reconcileRunning, syncFromSdk, withoutPids } from './sessions.ts';
 import { ensureToken } from './token.ts';
+import { connectorRegistry } from './connectors/registry.ts';
+import { anthropicConnector } from './connectors/anthropic.ts';
+import { googleConnector } from './connectors/google.ts';
+import { googleCalendarBackend, sampleCalendarBackend } from './connectors/google-calendar.ts';
+import { calendarService, type CalendarService } from './calendar.ts';
+import { taskService } from './tasks.ts';
+import { execaRunner } from './quick-add.ts';
+import { keychainSecrets, memorySecrets, scrub } from './secrets.ts';
 
 const TITLE_REFRESH_MS = 5 * 60_000;
 const REPO_POLL_MS = 3 * 60_000;
@@ -171,6 +180,33 @@ function refreshTitleSoon(sessionId: string, cwd: string) {
   );
 }
 
+// Connectors: all off until connected on Settings → Connections. Secrets live
+// in the Keychain; a sample run (or a non-Mac) keeps them in memory, and its
+// connectors can't reach the network at all.
+// Google's sync is the calendar's: today through 14 days out, at start, every
+// 10 minutes and on Sync now. (`calendar` is set just below.)
+let calendar: CalendarService;
+const google = googleConnector({ onSync: async () => ({ account: (await calendar.sync()).account }) });
+const connectors = connectorRegistry({
+  db,
+  secrets: SAMPLE || process.platform !== 'darwin' ? memorySecrets() : keychainSecrets(),
+  connectors: [google, anthropicConnector],
+  origin: HUB_ORIGINS[0],
+  fetch: SAMPLE
+    ? async () => {
+        throw new Error('Sample data: no outside requests');
+      }
+    : fetch,
+  sample: SAMPLE,
+  onChange: () => feed.notify(),
+  log: (line) => console.log(`${new Date().toISOString()} ${scrub(line)}`),
+});
+calendar = calendarService({
+  db,
+  backend: SAMPLE ? sampleCalendarBackend() : googleCalendarBackend(connectors, google),
+  onChange: () => feed.notify(),
+});
+
 const app = createApp({
   db,
   webDir: WEB_DIST_DIR,
@@ -192,6 +228,12 @@ const app = createApp({
   files,
   extensionId: extensionId(),
   agentToken,
+  connectors,
+  calendar,
+  tasks: taskService(db, undefined, () => feed.notify()),
+  // Quick-add's `claude -p` runs are left out of the running-sessions poll, like Generate's.
+  quickAddRunner: execaRunner(generatePids),
+  sample: SAMPLE,
 });
 serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   console.log(`Project Hub on http://${HOST}:${info.port} with ${listAllProjects(db).filter((p) => !p.archived).length} project(s)`);
@@ -202,6 +244,7 @@ serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
     setInterval(() => refreshRunning().catch(logError('claude agents')), AGENTS_POLL_MS);
   }
   repos.refreshAll().catch(logError('Repo check'));
+  connectors.start();
   // A project folder created after projects.yaml named it starts being watched within a minute.
   setInterval(files.sync, 60_000);
   setInterval(() => repos.refreshAll().catch(logError('Repo check')), REPO_POLL_MS);

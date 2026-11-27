@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { fetchNotes, saveNotes } from '../api.ts';
 import { saveLabel, useAutosave } from '../autosave.ts';
 import type { SectionProps } from './sections.tsx';
+import { NoteSuggestions } from './NoteSuggestions.tsx';
 
 export function NotesSection({ project }: SectionProps) {
   return <Notes key={project.slug} slug={project.slug} />;
@@ -34,6 +35,7 @@ function Notes({ slug }: { slug: string }) {
       <p data-testid="notes-status" className={`h-4 text-xs ${save.state === 'error' ? 'text-red-600' : 'text-stone-500'}`}>
         {saveLabel(save.state, save.error)}
       </p>
+      <NoteSuggestions slug={slug} text={text} />
     </div>
   );
 }

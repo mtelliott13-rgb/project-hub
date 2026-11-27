@@ -29,7 +29,7 @@ export function ProjectPage({ slug, run }: { slug: string; run: Run }) {
   return (
     <div className="space-y-5" data-testid="project-page">
       <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-meta text-muted">
-        <Link to="/" className="hover:text-ink hover:underline">
+        <Link to="/projects" className="hover:text-ink hover:underline">
           Projects
         </Link>
         <ChevronRight size={13} aria-hidden />
@@ -37,7 +37,7 @@ export function ProjectPage({ slug, run }: { slug: string; run: Run }) {
           {p.name}
         </span>
       </nav>
-      <ProjectHeader project={p} run={run} activity={activity} onDeleted={() => navigate('/')} />
+      <ProjectHeader project={p} run={run} activity={activity} onDeleted={() => navigate('/projects')} />
       <ChartsRow project={p} />
       <div className="flex justify-end gap-3 text-meta">
         <button type="button" className="text-muted hover:text-ink hover:underline" onClick={() => setAllSections(p.slug, true)}>

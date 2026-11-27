@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { like } from 'drizzle-orm';
 import type { Db } from '../src/server/db/index.ts';
-import { chats, sessions } from '../src/server/db/schema.ts';
+import { calendarEvents, chats, sessions, tasks } from '../src/server/db/schema.ts';
+import { addDays, dateOnly, rfc3339, startOfDay } from '../src/server/calendar.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -181,4 +182,68 @@ export function buildSampleRepo(dir: string, now = Date.now()) {
     git(['commit', '-q', '-m', c.message], { GIT_AUTHOR_DATE: t.toISOString(), GIT_COMMITTER_DATE: t.toISOString() });
   }
   write(WORK_IN_PROGRESS, new Date(now - 6 * MIN));
+}
+
+// Today page: made-up calendar events (today and the next week) and tasks, so
+// `pnpm sample` shows a full Today page with no Google connection. Events sit
+// at fixed local times today, so the "now" line lands among them.
+type SampleEvent = { day: number; title: string; at?: [number, number]; minutes?: number; allDay?: boolean; days?: number; slug?: string; recurring?: boolean };
+const EVENTS: SampleEvent[] = [
+  { day: 0, title: 'Morning planning', at: [9, 0], minutes: 15, recurring: true },
+  { day: 0, title: 'Code review: quote fetcher retries', at: [11, 0], minutes: 30, slug: 'market-data-pipeline' },
+  { day: 0, title: 'Lunch with Sam', at: [12, 30], minutes: 60 },
+  { day: 0, title: 'Mock interview practice', at: [15, 0], minutes: 45, slug: 'career-hq' },
+  { day: 0, title: 'Gym', at: [18, 0], minutes: 60, recurring: true },
+  { day: 0, title: 'Library books due', allDay: true },
+  { day: 1, title: 'Brokerage call: paper account limits', at: [10, 0], minutes: 30, slug: 'market-data-pipeline' },
+  { day: 1, title: 'Morning planning', at: [9, 0], minutes: 15, recurring: true },
+  { day: 2, title: 'Land cover lab report due', allDay: true, slug: 'land-cover' },
+  { day: 2, title: 'Office hours', at: [14, 0], minutes: 60, slug: 'land-cover' },
+  { day: 3, title: 'Coffee chat: data team at Example Energy', at: [16, 0], minutes: 30, slug: 'career-hq' },
+  { day: 4, title: 'Release the project map polish', at: [11, 0], minutes: 30, slug: 'project-hub' },
+  { day: 5, title: 'Data conference', allDay: true, days: 2 },
+  { day: 7, title: 'Morning planning', at: [9, 0], minutes: 15, recurring: true },
+];
+const TASKS: { title: string; slug?: string; done?: number }[] = [
+  { title: 'Renew the domain for the portfolio site' },
+  { title: 'Write the backfill runbook', slug: 'market-data-pipeline' },
+  { title: 'Ask Prof. Lee about the validation dataset', slug: 'land-cover' },
+  { title: 'Update the resume skills section', slug: 'career-hq' },
+  { title: 'Order printer ink', done: 2 * HOUR },
+];
+
+export function seedToday(db: Db, now = Date.now()) {
+  const today = startOfDay(new Date(now));
+  db.transaction((tx) => {
+    // The sample database is throwaway: start each run with only these.
+    tx.delete(calendarEvents).run();
+    tx.delete(tasks).run();
+    EVENTS.forEach((e, i) => {
+      const day = addDays(today, e.day);
+      const startsAt = e.allDay ? day : new Date(day.getFullYear(), day.getMonth(), day.getDate(), e.at![0], e.at![1]);
+      const endsAt = e.allDay ? addDays(day, e.days ?? 1) : new Date(startsAt.getTime() + (e.minutes ?? 30) * MIN);
+      tx.insert(calendarEvents)
+        .values({
+          id: `sample${String(i).padStart(4, '0')}`,
+          title: e.title,
+          allDay: !!e.allDay,
+          start: e.allDay ? dateOnly(startsAt) : rfc3339(startsAt),
+          end: e.allDay ? dateOnly(endsAt) : rfc3339(endsAt),
+          startsAt,
+          endsAt,
+          // No link: sample events don't exist in Google Calendar.
+          htmlLink: null,
+          projectSlug: e.slug ?? null,
+          recurring: !!e.recurring,
+          createdByHub: !!e.slug,
+          syncedAt: new Date(now),
+        })
+        .run();
+    });
+    TASKS.forEach((t, i) => {
+      tx.insert(tasks)
+        .values({ title: t.title, projectSlug: t.slug ?? null, createdAt: new Date(now - (TASKS.length - i) * DAY), completedAt: t.done ? new Date(Math.max(today.getTime() + MIN, now - t.done)) : null })
+        .run();
+    });
+  });
 }

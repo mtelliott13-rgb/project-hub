@@ -222,6 +222,23 @@ phase's "Done when" check and showing me how to verify it myself.
 
 For each later phase: "Do Phase N from SPEC.md, same rules." With Codex the spec works as is; point an `AGENTS.md` at it instead of `CLAUDE.md`.
 
+## Today page and connectors (added November 2026)
+
+The first step toward a personal dashboard: a **Today** page with Google Calendar and quick-add reminders, built on a connector foundation that later connectors reuse (Gmail through the same Google connector, a Fidelity portfolio through SnapTrade, news).
+
+| Part | What it does |
+| --- | --- |
+| Connectors | One interface (`src/server/connectors/`): id, name, status (not set up / connected as <account> / needs reconnect / sync failed, plus last sync), connect, disconnect, sync. Every connector is off until you click Connect and makes no outside requests before that, or once it needs reconnecting. |
+| Secrets | macOS Keychain, service `project-hub`, through `security -i` on stdin, so values are never on a command line. Never in SQLite, `~/.project-hub/` files, logs, errors or answers to the page. In-memory store for tests and `pnpm sample`. |
+| Google | Installed-app OAuth with your own Desktop client (typed in, or read from the client JSON), loopback redirect to `/oauth/google/callback`, PKCE, one-time state, `access_type=offline`, only `calendar.events`. Rejected refresh token → "needs reconnect", no retries. Apps left in Testing expire sign-ins every 7 days, so Reconnect is one click on the Agenda card. |
+| Calendar | Primary calendar, today through 14 days, at start, every 10 minutes and on Sync now, cached in `calendar_events` (title, times, link, project only), in the Mac's time zone. `createEvent` is the one way to add an event: popup reminder, project slug in `extendedProperties.private`, optional checked repeat rule. Defaults: 30-minute events, 15 minutes before, all-day reminders 9:00 AM the day before. |
+| Today page | First tab and the landing page (Settings can switch back to Projects). Welcome banner with a summary line, quick-add bar, Agenda (today with a now line, the next 7 days by day), Tasks (no date; checkbox, project chip, Delete, Add date, Done today), Pick up where you left off, Running now. Each project page has a collapsed Upcoming section. |
+| Quick-add | Enter sends the text to a parser: Claude Code CLI (default, `claude -p` with Haiku, no tools, 30 s), the Anthropic API (your key, `claude-haiku-5-5`) or none. It gets only the text, the date and time, the time zone and project names and slugs. Output is validated; anything malformed, slow or unsure opens the form, pre-filled by the model or by chrono-node locally. A preview is always confirmed first; Undo for 8 seconds after. |
+| MCP | One write tool, `add_reminder` (behind the single `POST /agent/v1/reminders`), and a read-only `list_agenda`. The tool tells Claude to confirm with the user first, and it isn't pre-approved in Claude Code. |
+| Notes | Lines that look dated (weekday, tomorrow, month and day, 12/3, 3pm) get an "Add to calendar?" suggestion, found locally; a line goes to the parser only when clicked, then the same preview. Dismissed lines are remembered by hash. |
+
+**Request safety.** Every endpoint that changes something requires the hub's own Origin, as well as the page token and JSON. The OAuth callback can't carry them, since Google's redirect is a top-level navigation, so the one-time state and PKCE protect it instead. `pnpm check:secrets` scans staged lines (and all tracked files in CI) for secrets and personal data.
+
 ## Before you start
 
 Six decisions shape the build; the first two are the only ones Claude Code will ask about.

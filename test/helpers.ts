@@ -8,6 +8,13 @@ import { projectDocs } from '../src/server/docs.ts';
 import { monetizeJobs, type MonetizeResult } from '../src/server/monetize.ts';
 import { repoPoller, type RepoStatus } from '../src/server/repos.ts';
 import { fileWatcher, type WatchedRoot } from '../src/server/files.ts';
+import { connectorRegistry, type ConnectorRegistry } from '../src/server/connectors/registry.ts';
+import type { Connector } from '../src/server/connectors/types.ts';
+import { memorySecrets } from '../src/server/secrets.ts';
+import { calendarService, type CalendarBackend } from '../src/server/calendar.ts';
+import { sampleCalendarBackend } from '../src/server/connectors/google-calendar.ts';
+import { taskService } from '../src/server/tasks.ts';
+import type { Runner } from '../src/server/quick-add.ts';
 
 /** The hub's own origin in tests; requests go to full URLs so the Host check sees it. */
 export const HUB = 'http://127.0.0.1:4747';
@@ -26,7 +33,27 @@ export const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
  * a projects.yaml, notes and ideas next to the test database, and a Generate
  * that returns a canned draft.
  */
-export function testDeps(db: Db) {
+export function testDeps(
+  db: Db,
+  opts: { connectors?: Connector[]; fetch?: typeof fetch; calendarBackend?: (registry: ConnectorRegistry) => CalendarBackend; now?: () => Date; quickAddRunner?: Runner } = {},
+) {
+  // Connectors never reach the network in tests: unless a test passes its own,
+  // fetch throws, and secrets live in memory.
+  const secrets = memorySecrets();
+  const connectors = connectorRegistry({
+    db,
+    secrets,
+    connectors: opts.connectors ?? [],
+    origin: HUB,
+    fetch:
+      opts.fetch ??
+      (async () => {
+        throw new Error('tests never touch the network');
+      }),
+  });
+  // The calendar defaults to the local stand-in (no requests).
+  const calendar = calendarService({ db, backend: opts.calendarBackend?.(connectors) ?? sampleCalendarBackend(), now: opts.now });
+  const tasks = taskService(db, opts.now);
   const launched: LaunchPlan[] = [];
   // Fake processes for collector tests: port -> listeners.
   const listening = new Map<number, Listener[]>();
@@ -79,6 +106,10 @@ export function testDeps(db: Db) {
     store,
     docs,
     generated,
+    secrets,
+    connectors,
+    calendar,
+    tasks,
     deps: {
       store,
       docs,
@@ -99,6 +130,15 @@ export function testDeps(db: Db) {
       files,
       extensionId: EXTENSION_ID,
       agentToken: AGENT_TOKEN,
+      connectors,
+      calendar,
+      tasks,
+      // Tests never run Claude: the parser's command fails unless a test passes its own.
+      quickAddRunner:
+        opts.quickAddRunner ??
+        (async () => {
+          throw new Error('tests never run claude');
+        }),
     },
   };
 }

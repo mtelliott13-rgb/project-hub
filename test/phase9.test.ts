@@ -223,6 +223,65 @@ describe('/agent routes', () => {
   });
 });
 
+describe('/agent agenda and the one write route', () => {
+  const post = (app: ReturnType<typeof setup>['app'], body: unknown, headers: Record<string, string> = {}) =>
+    app.request(`${HUB}/agent/v1/reminders`, { method: 'POST', headers: { 'X-Agent-Token': AGENT_TOKEN, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+
+  it('add_reminder refuses browsers, bad tokens, other methods and non-JSON, and creates nothing then', async () => {
+    const { app, t } = setup();
+    const cases: [Record<string, string>, number][] = [
+      [{ Origin: HUB }, 403],
+      [{ Origin: 'https://evil.example' }, 403],
+      [{ 'Sec-Fetch-Site': 'same-origin' }, 403],
+      [{ 'Sec-Fetch-Site': 'cross-site' }, 403],
+      [{ 'X-Agent-Token': 'ui-t0ken' }, 401],
+      [{ 'X-Agent-Token': 't0ken' }, 401],
+      [{ 'X-Agent-Token': '' }, 401],
+      [{ 'Content-Type': 'text/plain' }, 415],
+    ];
+    for (const [headers, status] of cases) expect((await post(app, { title: 'x' }, headers)).status, JSON.stringify(headers)).toBe(status);
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
+      const r = await app.request(`${HUB}/agent/v1/reminders`, { method, headers: { 'X-Agent-Token': AGENT_TOKEN, 'Content-Type': 'application/json' }, body: '{}' });
+      expect(r.status).toBe(405);
+    }
+    // The page's own route doesn't take the agent token either.
+    const page = await app.request(`${HUB}/api/reminders`, { method: 'POST', headers: { 'X-Agent-Token': AGENT_TOKEN, 'Content-Type': 'application/json' }, body: '{"title":"x"}' });
+    expect(page.status).toBe(403);
+    expect(t.tasks.list()).toEqual([]);
+  });
+
+  it('add_reminder adds a task without a start, an event with one (createReminder), and refuses bad input', async () => {
+    const { app, t } = setup();
+    let r = await post(app, { title: 'Call the bank', project: 'career' });
+    expect(await r.json()).toEqual({ added: 'task', title: 'Call the bank', project: 'career', projectName: 'Career HQ' });
+    r = await post(app, { title: 'Dentist', start: '2030-06-02T09:30', reminderMinutes: 30 });
+    const ev = await r.json();
+    expect(keys(ev)).toEqual(['added', 'allDay', 'end', 'link', 'project', 'projectName', 'repeats', 'start', 'title']);
+    expect(ev).toMatchObject({ added: 'event', title: 'Dentist', allDay: false });
+    for (const bad of [{}, { title: '' }, { title: 'x', start: 'soon' }, { title: 'x', repeat: 'FREQ=DAILY' }, { title: 'x', project: 'nope' }, { title: 'x', extra: 1 }]) {
+      expect((await post(app, bad)).status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(t.tasks.list().map((x) => x.title)).toEqual(['Call the bank']);
+  });
+
+  it('list_agenda returns events and open tasks with pinned fields', async () => {
+    const { get, t } = setup();
+    t.tasks.create({ title: 'Open one', project: 'career' });
+    const done = t.tasks.create({ title: 'Done one' });
+    t.tasks.update(done.id, { done: true });
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const day = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+    await t.calendar.createEvent({ title: 'Lab due', start: day, project: 'career' });
+    const { status, body } = await get('/agent/v1/agenda?days=3');
+    expect(status).toBe(200);
+    expect(keys(body)).toEqual(['calendarConnected', 'days', 'events', 'now', 'openTasks', 'timeZone']);
+    expect(body.days).toBe(3);
+    expect(body.events).toEqual([{ title: 'Lab due', start: day, end: expect.any(String), allDay: true, project: 'career', projectName: 'Career HQ', repeats: false, link: null }]);
+    expect(body.openTasks).toEqual([{ title: 'Open one', project: 'career', projectName: 'Career HQ', added: expect.any(String) }]);
+  });
+});
+
 describe('MCP server', () => {
   async function connect(get = setup()) {
     const fetcher = ((url: string, init?: RequestInit) => get.app.request(url, init)) as typeof fetch;
@@ -235,11 +294,17 @@ describe('MCP server', () => {
   }
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0].text;
 
-  it('offers exactly five tools, all read-only', async () => {
+  it('offers exactly seven tools: six read-only, and add_reminder, the one write', async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['list_projects', 'get_project', 'recent_sessions', 'list_ideas', 'get_toolkit']);
-    for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+    expect(tools.map((t) => t.name)).toEqual(['list_projects', 'get_project', 'recent_sessions', 'list_ideas', 'get_toolkit', 'list_agenda', 'add_reminder']);
+    for (const t of tools.filter((t) => t.name !== 'add_reminder')) expect(t.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+    const add = tools.find((t) => t.name === 'add_reminder')!;
+    expect(add.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    // It tells Claude to confirm with the user first.
+    expect(add.description).toContain('call it only after they say yes');
+    expect(Object.keys(add.inputSchema.properties ?? {})).toEqual(['title', 'start', 'end', 'all_day', 'reminder_minutes', 'repeat', 'project']);
+    expect(add.inputSchema.required).toEqual(['title']);
     expect(Object.keys(tools.find((t) => t.name === 'recent_sessions')!.inputSchema.properties ?? {})).toEqual(['slug', 'limit']);
   });
 
@@ -254,6 +319,17 @@ describe('MCP server', () => {
     expect(JSON.parse(text(await client.callTool({ name: 'recent_sessions', arguments: { slug: 'career', limit: 5 } }))).sessions).toHaveLength(1);
     expect(JSON.parse(text(await client.callTool({ name: 'list_ideas', arguments: { scope: 'hub' } }))).ideas).toHaveLength(1);
     expect(JSON.parse(text(await client.callTool({ name: 'get_toolkit', arguments: { slug: 'career' } }))).done).toBe(1);
+  });
+
+  it('add_reminder goes through the one POST route; list_agenda reads', async () => {
+    const { client, t } = await connect();
+    const r = await client.callTool({ name: 'add_reminder', arguments: { title: 'Renew passport', project: 'career' } });
+    expect(JSON.parse(text(r))).toEqual({ added: 'task', title: 'Renew passport', project: 'career', projectName: 'Career HQ' });
+    expect(t.tasks.list().map((x) => x.title)).toEqual(['Renew passport']);
+    const agenda = JSON.parse(text(await client.callTool({ name: 'list_agenda', arguments: { days: 2 } })));
+    expect(agenda.openTasks.map((x: { title: string }) => x.title)).toEqual(['Renew passport']);
+    const bad = await client.callTool({ name: 'add_reminder', arguments: { title: 'x', start: 'whenever' } });
+    expect(bad.isError).toBe(true);
   });
 
   it('bad arguments and unknown projects come back as tool errors', async () => {
@@ -293,13 +369,14 @@ describe('registering', () => {
     expect(withoutDesktopEntry({ preferences: {} })).toEqual({ preferences: {} });
   });
 
-  it('allow rules name each of the five tools, are added once and removed alone', () => {
+  it('allow rules name each read-only tool (never add_reminder), are added once and removed alone', () => {
     expect(ALLOW_RULES).toEqual([
       'mcp__project-hub__list_projects',
       'mcp__project-hub__get_project',
       'mcp__project-hub__recent_sessions',
       'mcp__project-hub__list_ideas',
       'mcp__project-hub__get_toolkit',
+      'mcp__project-hub__list_agenda',
     ]);
     const settings = { hooks: { Stop: [] }, permissions: { allow: ['Bash(ls:*)'], deny: ['Read(.env)'] } };
     const added = withAllowRules(settings);

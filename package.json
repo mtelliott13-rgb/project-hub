@@ -24,7 +24,8 @@
     "mcp": "node --disable-warning=ExperimentalWarning scripts/mcp.ts",
     "mcp:plan": "node scripts/install-mcp.ts plan",
     "mcp:install": "node scripts/install-mcp.ts apply",
-    "mcp:uninstall": "node scripts/install-mcp.ts uninstall"
+    "mcp:uninstall": "node scripts/install-mcp.ts uninstall",
+    "check:secrets": "node scripts/check-secrets.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.299",
@@ -35,6 +36,7 @@
     "@tanstack/react-query": "^5.104.2",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
+    "chrono-node": "2.10.3",
     "cmdk": "1.1.1",
     "drizzle-orm": "^0.45.4",
     "execa": "^10.1.1",

@@ -197,6 +197,9 @@
   transform-box: fill-box;
   transform-origin: center;
 }
+.hub-busy {
+  animation: hub-spin 1s linear infinite;
+}
 .hub-float {
   animation: hub-float 6s ease-in-out infinite;
 }

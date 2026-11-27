@@ -242,3 +242,58 @@ export type ShownFeed = Feed & { others: string[] };
 export type FeedResponse = ShownFeed | { file: string; error: string };
 export const feedOk = (r: FeedResponse | undefined): r is ShownFeed => !!r && 'postings' in r;
 export const fetchJobFeed = (slug: string) => hub<FeedResponse>(`/api/projects/${slug}/job-feed`);
+
+// Connectors (Settings → Connections). The page only ever gets status: secret
+// fields come back as `saved: true/false`, never their values.
+export type { ConnectorStatus, FieldStatus } from '../../src/server/connectors/types.ts';
+import type { ConnectorStatus } from '../../src/server/connectors/types.ts';
+export const fetchConnectors = () => hub<ConnectorStatus[]>('/api/connectors');
+export const saveConnectorFields = (id: string, values: Record<string, string>) =>
+  hub<ConnectorStatus>(`/api/connectors/${id}/fields`, { method: 'PUT', body: values });
+export const removeConnectorField = (id: string, key: string) =>
+  hub<ConnectorStatus>(`/api/connectors/${id}/fields/${key}`, { method: 'DELETE' });
+export const connectConnector = (id: string, returnTo?: '/settings#connections' | '/today' | '/') =>
+  hub<{ status: ConnectorStatus; redirect?: string }>(`/api/connectors/${id}/connect`, { method: 'POST', body: returnTo ? { returnTo } : {} });
+/** Sends a credentials file's JSON; the server keeps only the connector's fields from it. */
+export const importConnectorFile = (id: string, json: unknown) => hub<ConnectorStatus>(`/api/connectors/${id}/import`, { method: 'POST', body: json });
+export type CalendarDefaults = { eventMinutes: number; reminderMinutes: number; allDayReminderMinutes: number };
+export const fetchCalendarDefaults = () => hub<CalendarDefaults>('/api/settings/calendar');
+export const saveCalendarDefaults = (d: Partial<CalendarDefaults>) => hub<CalendarDefaults>('/api/settings/calendar', { method: 'PUT', body: d });
+export const disconnectConnector = (id: string) =>
+  hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/disconnect`, { method: 'POST', body: {} });
+export const syncConnector = (id: string) => hub<{ status: ConnectorStatus }>(`/api/connectors/${id}/sync`, { method: 'POST', body: {} });
+
+// Today page: cached calendar events, tasks and the landing page setting.
+import type { EventDto } from '../../src/server/calendar-routes.ts';
+import type { TaskDto } from '../../src/server/tasks.ts';
+import type { ConnectorState } from '../../src/server/connectors/types.ts';
+export type { EventDto, TaskDto };
+export type CalendarAnswer = {
+  timeZone: string;
+  google: { state: ConnectorState; account: string | null; lastSyncAt: string | null; error: string | null; canConnect: boolean; sample: boolean };
+  events: EventDto[];
+};
+export const fetchCalendar = (project?: string) => hub<CalendarAnswer>(`/api/calendar${project ? `?project=${project}` : ''}`);
+export const fetchTasks = (project?: string) => hub<TaskDto[]>(`/api/tasks${project ? `?project=${project}` : ''}`);
+export const createTask = (title: string, project?: string | null) => hub<{ task: TaskDto }>('/api/tasks', { method: 'POST', body: { title, project: project ?? null } });
+export const updateTask = (id: number, patch: { done?: boolean; project?: string | null; title?: string }) => hub<{ task: TaskDto }>(`/api/tasks/${id}`, { method: 'PUT', body: patch });
+export const deleteTask = (id: number) => hub<{ ok: true }>(`/api/tasks/${id}`, { method: 'DELETE' });
+export const scheduleTask = (id: number, when: { start: string; allDay?: boolean; end?: string | null }) =>
+  hub<{ event: EventDto; removedTask: TaskDto }>(`/api/tasks/${id}/schedule`, { method: 'POST', body: when });
+export const deleteEvent = (id: string) => hub<{ ok: true }>(`/api/calendar/events/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const syncGoogle = () => hub<{ status: ConnectorStatus }>('/api/connectors/google/sync', { method: 'POST', body: {} });
+export type Landing = 'today' | 'projects';
+export const saveLanding = (landing: Landing) => hub<{ landing: Landing }>('/api/settings/general', { method: 'PUT', body: { landing } });
+
+// Quick-add: parse (creates nothing), then createReminder once you confirm.
+import type { Backend, Draft as ReminderDraft, ParseResult } from '../../src/server/quick-add.ts';
+export type { Backend, ReminderDraft, ParseResult };
+export const parseQuickAdd = (text: string) => hub<ParseResult>('/api/quick-add', { method: 'POST', body: { text } });
+export type CreatedDto = { kind: 'event'; event: EventDto } | { kind: 'task'; task: TaskDto };
+export const createReminder = (draft: Omit<ReminderDraft, 'kind'>) => hub<CreatedDto>('/api/reminders', { method: 'POST', body: draft });
+export const fetchQuickAddBackend = () => hub<{ backend: Backend }>('/api/settings/quick-add');
+export const saveQuickAddBackend = (backend: Backend) => hub<{ backend: Backend }>('/api/settings/quick-add', { method: 'PUT', body: { backend } });
+
+// Note date suggestions you dismissed, as SHA-256 hashes of the line (the text never leaves the page for this).
+export const fetchNoteDismissals = (slug: string) => hub<string[]>(`/api/projects/${slug}/note-dismissals`);
+export const dismissNoteLine = (slug: string, hash: string) => hub<{ ok: true }>(`/api/projects/${slug}/note-dismissals`, { method: 'POST', body: { hash } });

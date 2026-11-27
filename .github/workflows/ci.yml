@@ -1,4 +1,4 @@
-# Typecheck and tests on every push and pull request. The hub reads the newest
+# Secret scan, typecheck and tests on every push and pull request. The hub reads the newest
 # run on each branch with `gh run list` and shows it on the project's card.
 name: CI
 
@@ -28,5 +28,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:secrets --all
       - run: pnpm typecheck
       - run: pnpm test

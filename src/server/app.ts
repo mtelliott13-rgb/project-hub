@@ -26,6 +26,14 @@ import { addApplicationRoutes } from './application-routes.ts';
 import { findQueueFiles, packetFile as findPacketFile, PACKET_FILES, queueRoot, queueSummary, readQueue } from './applications.ts';
 import { activityInputs as gatherActivity, toolkitSummary } from './project-summary.ts';
 import { addChatRoutes } from './chat-routes.ts';
+import { addConnectorRoutes } from './connectors/routes.ts';
+import { addCalendarRoutes, landingPage } from './calendar-routes.ts';
+import type { CalendarService } from './calendar.ts';
+import { addTaskRoutes, type TaskService } from './tasks.ts';
+import { addNoteDismissalRoutes, addQuickAddRoutes, addReminderRoutes } from './reminders.ts';
+import { getDefaults, localTimeZone } from './calendar.ts';
+import type { Runner } from './quick-add.ts';
+import type { ConnectorRegistry } from './connectors/registry.ts';
 import type { RepoPoller } from './repos.ts';
 import { findToolkitFiles, readToolkit, STATUSES, ToolkitError, writeToolkitStatus, type ToolkitStatus } from './toolkit.ts';
 import type { ChangeFeed } from './events.ts';
@@ -95,6 +103,16 @@ type AppDeps = DocDeps & {
   agentToken: string;
   /** Full path to uv, for Career HQ's status command (queue-status.ts). */
   uvPath: string;
+  /** Outside services (Google, Anthropic…), all off until connected. */
+  connectors: ConnectorRegistry;
+  /** Cached Google Calendar events and createEvent (Today page). */
+  calendar: CalendarService;
+  /** Undated tasks (Today page). */
+  tasks: TaskService;
+  /** Runs `claude -p` for the quick-add parser (tests pass a fake). */
+  quickAddRunner: Runner;
+  /** Sample data: the quick-add parser defaults to None. */
+  sample?: boolean;
 };
 
 /**
@@ -240,6 +258,24 @@ export function createApp(deps: AppDeps) {
   addLinkRoutes(app, deps);
   addChatRoutes(app, deps);
   addAgentRoutes(app, deps);
+  addConnectorRoutes(app, deps.connectors, origins);
+  addCalendarRoutes(app, { db, calendar: deps.calendar, connectors: deps.connectors, origins });
+  addTaskRoutes(app, { tasks: deps.tasks, calendar: deps.calendar, origins });
+  addReminderRoutes(app, { calendar: deps.calendar, tasks: deps.tasks, origins });
+  addNoteDismissalRoutes(app, { db, origins });
+  addQuickAddRoutes(app, {
+    db,
+    origins,
+    sample: deps.sample,
+    quickAdd: {
+      // Only project names and slugs, plus the date, time and zone, go to the parser.
+      context: () => ({ now: new Date(), timeZone: localTimeZone(), projects: listAllProjects(db).filter((p) => !p.archived).map((p) => ({ slug: p.slug, name: p.name })) }),
+      defaults: () => getDefaults(db),
+      registry: deps.connectors,
+      run: deps.quickAddRunner,
+      log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    },
+  });
   addApplicationRoutes(app, deps);
 
   // The folder picker.
@@ -464,7 +500,9 @@ export function createApp(deps: AppDeps) {
     c.header('Cache-Control', 'no-store');
     c.header('X-Frame-Options', 'DENY');
     c.header('Content-Security-Policy', "frame-ancestors 'none'");
-    return c.html(injectToken(fs.readFileSync(indexHtml, 'utf8'), uiToken));
+    // Which page / opens (Settings), so the first paint is already the right page.
+    const html = injectToken(fs.readFileSync(indexHtml, 'utf8'), uiToken).replace('</head>', `    <meta name="hub-landing" content="${landingPage(db)}" />\n  </head>`);
+    return c.html(html);
   };
   app.get('/', page);
   app.get('/index.html', page);

@@ -137,3 +137,90 @@ export const chats = sqliteTable(
 );
 
 export type Chat = typeof chats.$inferSelect;
+
+// Connectors (Today page): outside services the hub can talk to, all off until
+// you click Connect. Only status lives here. Secrets (refresh tokens, client
+// secrets, API keys) are in the macOS Keychain (src/server/secrets.ts), never
+// in this database.
+export const connectors = sqliteTable('connectors', {
+  id: text('id').primaryKey(),
+  // 'connected' and 'needs-reconnect' come from connecting; 'error' is a failed
+  // sync that will be tried again on schedule. No row means not set up.
+  state: text('state', { enum: ['not-set-up', 'connected', 'needs-reconnect', 'error'] }).notNull(),
+  // What the service calls the account (e.g. the calendar's address); shown on the page.
+  account: text('account'),
+  lastSyncAt: integer('last_sync_at', { mode: 'timestamp_ms' }),
+  // A short, secret-free reason for 'error' or 'needs-reconnect'.
+  lastError: text('last_error'),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+export type ConnectorRow = typeof connectors.$inferSelect;
+
+// Hub preferences set on the Settings page, and connectors' non-secret fields
+// (e.g. a Google client ID), as key -> JSON value.
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+// Calendar events from the Google connector, today through 14 days out,
+// replaced on every sync. Only what the Today page shows: never descriptions,
+// locations or guests. Times are kept as given (RFC 3339, or YYYY-MM-DD for
+// all-day events) plus epoch ms for sorting, in the Mac's time zone.
+export const calendarEvents = sqliteTable(
+  'calendar_events',
+  {
+    // Google's event id (one row per occurrence of a repeating event).
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    allDay: integer('all_day', { mode: 'boolean' }).notNull(),
+    start: text('start').notNull(),
+    end: text('end').notNull(),
+    startsAt: integer('starts_at', { mode: 'timestamp_ms' }).notNull(),
+    endsAt: integer('ends_at', { mode: 'timestamp_ms' }).notNull(),
+    // Opens the event in Google Calendar.
+    htmlLink: text('html_link'),
+    // From the event's extendedProperties.private.hubProject (set when the hub creates it).
+    projectSlug: text('project_slug'),
+    recurring: integer('recurring', { mode: 'boolean' }).notNull().default(false),
+    // The hub made it (extendedProperties.private.hubCreated); only these can be deleted from the hub (Undo).
+    createdByHub: integer('created_by_hub', { mode: 'boolean' }).notNull().default(false),
+    syncedAt: integer('synced_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('calendar_events_start_idx').on(t.startsAt)],
+);
+
+export type CalendarEvent = typeof calendarEvents.$inferSelect;
+
+// Tasks (Today page): reminders with no date. Completed ones stay until the
+// day is over (the page folds them into "Done today"), then drop off the page.
+export const tasks = sqliteTable(
+  'tasks',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    title: text('title').notNull(),
+    projectSlug: text('project_slug').references(() => projects.slug, { onDelete: 'set null' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('tasks_project_idx').on(t.projectSlug)],
+);
+
+export type Task = typeof tasks.$inferSelect;
+
+// "Add to calendar?" suggestions next to dates in project notes that you
+// dismissed (or added), so they aren't offered again. Only a SHA-256 of the
+// note line is kept, never its text.
+export const noteDismissals = sqliteTable(
+  'note_dismissals',
+  {
+    projectSlug: text('project_slug')
+      .notNull()
+      .references(() => projects.slug, { onDelete: 'cascade' }),
+    lineHash: text('line_hash').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [uniqueIndex('note_dismissals_idx').on(t.projectSlug, t.lineHash)],
+);

@@ -1,9 +1,11 @@
-// Settings (SPEC.md, Phase 7): which hub project each Claude Project's chats
+// Settings: connections to outside services (connectors), and (SPEC.md, Phase 7) which hub project each Claude Project's chats
 // file into, the claude.ai data-export import, and the Chrome extension.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { fetchClaudeProjects, fetchProjects, importExport, mapClaudeProject } from './api.ts';
+import { useEffect, useState } from 'react';
+import { fetchClaudeProjects, fetchProjects, importExport, mapClaudeProject, saveLanding, type Landing } from './api.ts';
+import { getLanding, setLanding } from './router.tsx';
 import { ago } from './ui.tsx';
+import { CalendarDefaultsSection, ConnectionsSection, QuickAddParserSection } from './Connections.tsx';
 
 const inputClass = 'rounded-md border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-950';
 const card = 'rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900';
@@ -31,6 +33,10 @@ export function SettingsPage() {
     onSettled: () => void queryClient.invalidateQueries(),
   });
   const ext = cp.data?.extension;
+  // Arriving from "Connect Google Calendar" on Today: go to Connections.
+  useEffect(() => {
+    if (location.hash === '#connections') document.getElementById('connections')?.scrollIntoView();
+  }, []);
 
   return (
     <div className="space-y-6" data-testid="settings-page">
@@ -40,6 +46,11 @@ export function SettingsPage() {
           {note.text}
         </p>
       )}
+
+      <LandingSection />
+      <ConnectionsSection />
+      <CalendarDefaultsSection />
+      <QuickAddParserSection />
 
       <section className={card}>
         <h2 className={h2}>Claude Projects</h2>
@@ -122,5 +133,47 @@ export function SettingsPage() {
         </ol>
       </section>
     </div>
+  );
+}
+
+/** Which page the hub opens on: Today (the default) or Projects. */
+function LandingSection() {
+  const [value, setValue] = useState<Landing>(getLanding());
+  const save = useMutation({
+    mutationFn: saveLanding,
+    onSuccess: (r) => {
+      setValue(r.landing);
+      setLanding(r.landing);
+    },
+  });
+  const options: { v: Landing; label: string; help: string }[] = [
+    { v: 'today', label: 'Today', help: 'Agenda, tasks and what to pick up' },
+    { v: 'projects', label: 'Projects', help: 'The project cards and map' },
+  ];
+  return (
+    <section aria-labelledby="landing-h" data-testid="landing-setting">
+      <h2 id="landing-h" className="text-[15px] font-semibold text-ink">
+        Open the hub on
+      </h2>
+      <div role="radiogroup" aria-labelledby="landing-h" className="mt-2 flex flex-wrap gap-2">
+        {options.map((o) => (
+          <label
+            key={o.v}
+            className={`flex cursor-pointer items-start gap-2 rounded-card border bg-card px-3 py-2 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent ${value === o.v ? 'border-accent' : 'border-line'}`}
+          >
+            <input type="radio" name="landing" className="mt-0.5 accent-[var(--color-accent)]" checked={value === o.v} disabled={save.isPending} onChange={() => save.mutate(o.v)} />
+            <span>
+              <span className="block font-medium text-ink">{o.label}</span>
+              <span className="block text-[12px] text-muted">{o.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {save.error && (
+        <p role="alert" className="mt-1 text-[13px] text-red-700 dark:text-red-300">
+          {save.error.message}
+        </p>
+      )}
+    </section>
   );
 }
