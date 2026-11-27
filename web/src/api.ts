@@ -293,3 +293,7 @@ export type CreatedDto = { kind: 'event'; event: EventDto } | { kind: 'task'; ta
 export const createReminder = (draft: Omit<ReminderDraft, 'kind'>) => hub<CreatedDto>('/api/reminders', { method: 'POST', body: draft });
 export const fetchQuickAddBackend = () => hub<{ backend: Backend }>('/api/settings/quick-add');
 export const saveQuickAddBackend = (backend: Backend) => hub<{ backend: Backend }>('/api/settings/quick-add', { method: 'PUT', body: { backend } });
+
+// Note date suggestions you dismissed, as SHA-256 hashes of the line (the text never leaves the page for this).
+export const fetchNoteDismissals = (slug: string) => hub<string[]>(`/api/projects/${slug}/note-dismissals`);
+export const dismissNoteLine = (slug: string, hash: string) => hub<{ ok: true }>(`/api/projects/${slug}/note-dismissals`, { method: 'POST', body: { hash } });

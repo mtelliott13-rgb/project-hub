@@ -7,13 +7,13 @@ showing its recent Claude Code sessions, claude.ai chats, git and CI status,
 recently changed files, links, notes and ideas, with one click to pick up where
 I left off.
 
-![Project Hub home page, running on the sample data](docs/screenshot.png)
+![Project Hub's Today page, running on the sample data](docs/screenshot.png)
 
 ![The project map: running projects pulse, lines flow toward the centre, and hovering a project shows its details](docs/constellation.gif)
 
 I use it every day on my own projects. The screenshot and `sample-data/` use made-up content so my job applications, chats and notes stay private.
 
-**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 337 tests, CI on every push.
+**TypeScript · Hono · SQLite/Drizzle · React · Vite · Tailwind · Vitest**: 364 tests, CI on every push.
 
 It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 `~/.project-hub/`. Project data stays on this Mac. What goes out:
@@ -30,7 +30,8 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
   code it trades for tokens at `oauth2.googleapis.com`. Then:
   - Every 10 minutes, at start and on "Sync now", it reads events on my primary
     calendar from today through 14 days out.
-  - When I confirm a reminder, it creates that one event.
+  - When I confirm a reminder (quick-add, a note suggestion, or Claude's
+    `add_reminder` after I've said yes), it creates that one event.
   - Undo deletes that one event.
   - If Google rejects the sign-in, it stops and waits for Reconnect.
   - It keeps only each event's title, times, link and linked project, never
@@ -84,8 +85,12 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
   never edits Career HQ's files itself. "Fill application" starts Career HQ's
   form-filling session, which by Career HQ's rules stops before submit. I
   submit myself.
-- **⌘K switcher**, and a read-only **MCP server** so Claude can ask what's going
-  on in your projects.
+- **Quick-add**: type "Fidelity call Fri 3pm" on Today, check the preview, and
+  it goes to Google Calendar (or the task list when there's no date), with Undo.
+  Lines in project notes that mention a date get an "Add to calendar?"
+  suggestion that opens the same preview.
+- **⌘K switcher**, and an **MCP server** so Claude can ask what's going on in
+  your projects and, once you've confirmed the details, add a reminder.
 
 ## Privacy and security
 
@@ -107,9 +112,17 @@ It runs on your own Mac, listens only on `127.0.0.1`, and keeps its data in
 - **No prompt text.** Hook payloads pass through a schema that drops anything
   unknown. The hub stores session ids, folders, titles and times, never what
   I typed.
-- **Read-only MCP.** The MCP server has five read-only tools over a GET-only
-  `/agent` API with its own token, which refuses any request from a browser.
-  Tests pin every tool and field it returns.
+- **MCP with one write tool.** The MCP server has six read-only tools and one
+  write tool, `add_reminder`, over the `/agent` API with its own token, which
+  refuses any request from a browser.
+  - `/agent` is GET-only except one route, `POST /agent/v1/reminders`, which can
+    add a single calendar event (with a popup reminder, optional repeat rule and
+    project) or an undated task, through the same code as the Today page. It
+    can't edit or delete anything.
+  - The tool's description tells Claude to confirm the details with me first.
+    `pnpm mcp:install` pre-approves only the read-only tools, so Claude Code
+    also asks permission before each `add_reminder` call.
+  - Tests pin every tool and field.
 - **Application data stays on the page.** The review queue, fill sheets and job
   feed are never exposed through MCP or `/agent`, and neither are project
   notes or Monetize drafts. Tests check this.
@@ -177,7 +190,7 @@ Optional pieces, each separate:
 |---|---|
 | `pnpm agent:install` | Starts the hub at login (launchd agent `local.project-hub`). |
 | `pnpm hooks:plan`, then `pnpm hooks:install` | Adds Claude Code hooks so sessions show up live. `hooks:plan` shows the change to `~/.claude/settings.json` first; `hooks:install` backs up the file before writing. |
-| `pnpm mcp:plan`, then `pnpm mcp:install` | Registers the read-only MCP server with Claude Code and the Claude desktop app. |
+| `pnpm mcp:plan`, then `pnpm mcp:install` | Registers the MCP server with Claude Code and the Claude desktop app, and pre-approves its read-only tools (not `add_reminder`). If you installed it before, run it again to allow `list_agenda`. |
 | Chrome → Extensions → Load unpacked → `extension/` | Files your claude.ai chats. |
 
 Each install has a matching `uninstall`.

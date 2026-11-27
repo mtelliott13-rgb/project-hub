@@ -1,12 +1,14 @@
 // Registering the hub's MCP server (Phase 9): the Claude desktop app's
 // claude_desktop_config.json entry, and the Claude Code allow rules for the
-// five read-only tools. Pure functions; scripts/install-mcp.ts does the I/O.
+// read-only tools (never add_reminder). Pure functions; scripts/install-mcp.ts does the I/O.
 import path from 'node:path';
 
 export const MCP_NAME = 'project-hub';
-export const MCP_TOOLS = ['list_projects', 'get_project', 'recent_sessions', 'list_ideas', 'get_toolkit'] as const;
+export const MCP_TOOLS = ['list_projects', 'get_project', 'recent_sessions', 'list_ideas', 'get_toolkit', 'list_agenda', 'add_reminder'] as const;
+/** Tools pre-approved in ~/.claude/settings.json: the read-only ones. add_reminder is left out on purpose, so Claude Code asks you before every call. */
+export const READ_ONLY_TOOLS = MCP_TOOLS.filter((t) => t !== 'add_reminder');
 /** Claude Code permission rules, one per tool, so a tool added later is never pre-approved. */
-export const ALLOW_RULES = MCP_TOOLS.map((t) => `mcp__${MCP_NAME}__${t}`);
+export const ALLOW_RULES = READ_ONLY_TOOLS.map((t) => `mcp__${MCP_NAME}__${t}`);
 
 /** How to start the server: full paths, since the desktop app doesn't read ~/.zshrc. */
 export function mcpCommand(home: string) {

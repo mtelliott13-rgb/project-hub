@@ -178,6 +178,8 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const tidy = (s: string) =>
   s
     .replace(/\s+/g, ' ')
+    // "Report due : methods" → "Report due: methods"
+    .replace(/\s+([:;,.!?])/g, '$1')
     .replace(/\s+(at|on|by|for|from|in|next|this)\s*$/i, '')
     .replace(/^\s*(at|on|by|for|from)\s+/i, '')
     .replace(/[\s,;:-]+$/, '')

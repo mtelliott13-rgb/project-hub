@@ -7,9 +7,14 @@
 // What each route returns is exactly what the MCP tools return; the field
 // lists are pinned by test/phase9.test.ts. Never notes, Monetize drafts, file
 // contents or tokens, and the hub stores no prompt text at all.
+//
+// One exception to "GET only": POST /agent/v1/reminders (the add_reminder
+// tool) adds one reminder through createReminder, the same function the Today
+// page uses. Same token, same refusal of anything that looks like a browser.
 import fs from 'node:fs';
 import os from 'node:os';
 import type { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { buildTimeline, describeEvent, isStale, lastActivity, sortProjects, statusBadges, type ActivityEvent } from './activity.ts';
 import { listAllProjects, type Db } from './db/index.ts';
 import type { Project, Session } from './db/schema.ts';
@@ -20,6 +25,11 @@ import type { RepoPoller } from './repos.ts';
 import { resumeProblem, sessionsForProjects } from './sessions.ts';
 import { tokenMatches } from './token.ts';
 import { findToolkitFiles, readToolkit } from './toolkit.ts';
+import { InputError, localTimeZone, type CalendarService } from './calendar.ts';
+import { AuthRejected, ConnectorError } from './connectors/types.ts';
+import { createReminder } from './reminders.ts';
+import type { TaskService } from './tasks.ts';
+import { scrub } from './secrets.ts';
 
 export type AgentDeps = {
   db: Db;
@@ -29,7 +39,13 @@ export type AgentDeps = {
   /** ~/.project-hub/agent-token: read-only, accepted on /agent/* and nowhere else. */
   agentToken: string;
   home?: string;
+  /** For list_agenda and add_reminder. */
+  calendar: CalendarService;
+  tasks: TaskService;
 };
+
+/** The one write route. */
+export const AGENT_WRITE_PATH = '/agent/v1/reminders';
 
 const MAX_SESSIONS = 50;
 
@@ -47,14 +63,17 @@ const today = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-export function addAgentRoutes(app: Hono, { db, repos, files, ideasFile, agentToken, home = os.homedir() }: AgentDeps) {
+export function addAgentRoutes(app: Hono, { db, repos, files, ideasFile, agentToken, home = os.homedir(), calendar, tasks }: AgentDeps) {
   const short = (p: string) => (p === home || p.startsWith(home + '/') ? '~' + p.slice(home.length) : p);
   const iso = (d: Date | string) => (typeof d === 'string' ? d : d.toISOString());
 
+  app.use(AGENT_WRITE_PATH, bodyLimit({ maxSize: 16_384, onError: (c) => c.json({ error: 'Too large' }, 413) }));
   app.use('/agent/*', async (c, next) => {
     if (c.req.header('Origin') || c.req.header('Sec-Fetch-Site')) return c.json({ error: 'Not for browsers' }, 403);
-    if (c.req.method !== 'GET') return c.json({ error: 'Read-only' }, 405);
+    const write = c.req.method === 'POST' && c.req.path === AGENT_WRITE_PATH;
+    if (c.req.method !== 'GET' && !write) return c.json({ error: 'Read-only' }, 405);
     if (!tokenMatches(agentToken, c.req.header('X-Agent-Token'))) return c.json({ error: 'Wrong or missing agent token' }, 401);
+    if (write && !(c.req.header('Content-Type') ?? '').startsWith('application/json')) return c.json({ error: 'Send JSON' }, 415);
     await next();
   });
 
@@ -225,6 +244,56 @@ export function addAgentRoutes(app: Hono, { db, repos, files, ideasFile, agentTo
       return t ? c.json({ project: p.slug, ...t }) : c.json({ error: `${p.name} has no toolkit.yaml.` }, 404);
     } catch (e) {
       return c.json({ error: `toolkit.yaml can't be read: ${e instanceof Error ? e.message : e}` }, 422);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Today page: the agenda (read) and add_reminder (the one write).
+
+  const agendaEvent = (e: ReturnType<CalendarService['list']>[number], names: Map<string, string>) => ({
+    title: e.title,
+    start: e.start,
+    end: e.end,
+    allDay: e.allDay,
+    project: e.projectSlug,
+    projectName: e.projectSlug ? (names.get(e.projectSlug) ?? null) : null,
+    repeats: e.recurring,
+    link: e.htmlLink,
+  });
+
+  /** list_agenda */
+  app.get('/agent/v1/agenda', (c) => {
+    const days = Math.min(Math.max(Number(c.req.query('days')) || 7, 1), 14);
+    const names = new Map(listAllProjects(db).map((p) => [p.slug, p.name]));
+    return c.json({
+      now: new Date().toISOString(),
+      timeZone: localTimeZone(),
+      days,
+      calendarConnected: calendar.ready(),
+      events: calendar.list(days).map((e) => agendaEvent(e, names)),
+      openTasks: tasks
+        .list()
+        .filter((t) => !t.completedAt)
+        .map((t) => ({ title: t.title, project: t.projectSlug, projectName: t.projectSlug ? (names.get(t.projectSlug) ?? null) : null, added: iso(t.createdAt) })),
+    });
+  });
+
+  /** add_reminder: the MCP server's only write. */
+  app.post(AGENT_WRITE_PATH, async (c) => {
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    try {
+      const made = await createReminder({ calendar, tasks }, body);
+      const names = new Map(listAllProjects(db).map((p) => [p.slug, p.name]));
+      return c.json(
+        made.kind === 'event'
+          ? { added: 'event', ...agendaEvent(made.event, names) }
+          : { added: 'task', title: made.task.title, project: made.task.projectSlug, projectName: made.task.projectSlug ? (names.get(made.task.projectSlug) ?? null) : null },
+      );
+    } catch (e) {
+      if (e instanceof InputError) return c.json({ error: e.message }, 400);
+      if (e instanceof AuthRejected) return c.json({ error: 'Google Calendar needs reconnecting on the hub (Today page → Reconnect).' }, 409);
+      if (e instanceof ConnectorError) return c.json({ error: scrub(e.message) }, e.code === 'not-connected' ? 409 : 502);
+      return c.json({ error: "Couldn't add it; see the hub log." }, 500);
     }
   });
 }

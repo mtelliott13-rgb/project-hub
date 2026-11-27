@@ -30,7 +30,7 @@ import { addConnectorRoutes } from './connectors/routes.ts';
 import { addCalendarRoutes, landingPage } from './calendar-routes.ts';
 import type { CalendarService } from './calendar.ts';
 import { addTaskRoutes, type TaskService } from './tasks.ts';
-import { addQuickAddRoutes, addReminderRoutes } from './reminders.ts';
+import { addNoteDismissalRoutes, addQuickAddRoutes, addReminderRoutes } from './reminders.ts';
 import { getDefaults, localTimeZone } from './calendar.ts';
 import type { Runner } from './quick-add.ts';
 import type { ConnectorRegistry } from './connectors/registry.ts';
@@ -262,6 +262,7 @@ export function createApp(deps: AppDeps) {
   addCalendarRoutes(app, { db, calendar: deps.calendar, connectors: deps.connectors, origins });
   addTaskRoutes(app, { tasks: deps.tasks, calendar: deps.calendar, origins });
   addReminderRoutes(app, { calendar: deps.calendar, tasks: deps.tasks, origins });
+  addNoteDismissalRoutes(app, { db, origins });
   addQuickAddRoutes(app, {
     db,
     origins,

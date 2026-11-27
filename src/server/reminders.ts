@@ -8,6 +8,8 @@ import { InputError, MAX_REMINDER_MINUTES, type CalendarService } from './calend
 import type { CalendarEvent, Task } from './db/schema.ts';
 import { taskDto, type TaskService } from './tasks.ts';
 import type { Db } from './db/index.ts';
+import { eq } from 'drizzle-orm';
+import { noteDismissals, projects } from './db/schema.ts';
 import { getSetting, setSetting } from './settings.ts';
 import { BACKENDS, MAX_TEXT, parseQuickAdd, type Backend, type QuickAddDeps } from './quick-add.ts';
 
@@ -85,5 +87,28 @@ export function addQuickAddRoutes(app: Hono, deps: { db: Db; origins: string[]; 
     if (!BACKENDS.includes(body?.backend as Backend)) return c.json({ error: `backend is one of ${BACKENDS.join(', ')}` }, 400);
     setSetting(deps.db, 'quickadd.backend', body!.backend);
     return c.json({ backend: backend() });
+  });
+}
+
+/**
+ * Note date suggestions you dismissed (or added), per project, as SHA-256
+ * hashes of the line: the page computes the hash, so note text never comes here.
+ */
+export function addNoteDismissalRoutes(app: Hono, deps: { db: Db; origins: string[] }) {
+  const { db } = deps;
+  const known = (slug: string) => !!db.select().from(projects).where(eq(projects.slug, slug)).get();
+  app.get('/api/projects/:slug/note-dismissals', (c) => {
+    const slug = c.req.param('slug');
+    if (!known(slug)) return c.json({ error: 'No such project' }, 404);
+    return c.json(db.select().from(noteDismissals).where(eq(noteDismissals.projectSlug, slug)).all().map((r) => r.lineHash));
+  });
+  app.post('/api/projects/:slug/note-dismissals', async (c) => {
+    if (!deps.origins.includes(c.req.header('Origin') ?? '')) return c.json({ error: 'requests must come from the hub page (Origin)' }, 403);
+    const slug = c.req.param('slug');
+    if (!known(slug)) return c.json({ error: 'No such project' }, 404);
+    const body = (await c.req.json().catch(() => null)) as { hash?: unknown } | null;
+    if (typeof body?.hash !== 'string' || !/^[0-9a-f]{64}$/.test(body.hash)) return c.json({ error: 'Expected { hash: <64 hex characters> }' }, 400);
+    db.insert(noteDismissals).values({ projectSlug: slug, lineHash: body.hash, createdAt: new Date() }).onConflictDoNothing().run();
+    return c.json({ ok: true });
   });
 }

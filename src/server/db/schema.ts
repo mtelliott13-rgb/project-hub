@@ -209,3 +209,18 @@ export const tasks = sqliteTable(
 );
 
 export type Task = typeof tasks.$inferSelect;
+
+// "Add to calendar?" suggestions next to dates in project notes that you
+// dismissed (or added), so they aren't offered again. Only a SHA-256 of the
+// note line is kept, never its text.
+export const noteDismissals = sqliteTable(
+  'note_dismissals',
+  {
+    projectSlug: text('project_slug')
+      .notNull()
+      .references(() => projects.slug, { onDelete: 'cascade' }),
+    lineHash: text('line_hash').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [uniqueIndex('note_dismissals_idx').on(t.projectSlug, t.lineHash)],
+);

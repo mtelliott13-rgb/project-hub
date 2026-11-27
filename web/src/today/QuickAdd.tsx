@@ -22,10 +22,10 @@ import { Kbd, Modal, PrimaryButton, SoftButton } from '../ui.tsx';
 import { localDate, previewParts } from './model.ts';
 import { onQuickAddFocus } from './focus.ts';
 
-const FALLBACK_DEFAULTS = { eventMinutes: 30, reminderMinutes: 15, allDayReminderMinutes: 900 };
+export const FALLBACK_DEFAULTS = { eventMinutes: 30, reminderMinutes: 15, allDayReminderMinutes: 900 };
 
 type Stage = { kind: 'idle' } | { kind: 'preview'; draft: ReminderDraft } | { kind: 'form'; draft: ReminderDraft; reason: string | null };
-type Toast = { created: CreatedDto; title: string } | { undone: string } | null;
+export type Toast = { created: CreatedDto; title: string } | { undone: string } | null;
 
 export function QuickAdd({ projects, onCreated }: { projects: ProjectDto[]; onCreated?: () => void }) {
   const queryClient = useQueryClient();
@@ -112,7 +112,7 @@ export function QuickAdd({ projects, onCreated }: { projects: ProjectDto[]; onCr
   );
 }
 
-function PreviewCard({ draft, parts, onAdded, onEdit, onCancel }: { draft: ReminderDraft; parts: string[]; onAdded: (c: CreatedDto, title: string) => void; onEdit: () => void; onCancel: () => void }) {
+export function PreviewCard({ draft, parts, onAdded, onEdit, onCancel }: { draft: ReminderDraft; parts: string[]; onAdded: (c: CreatedDto, title: string) => void; onEdit: () => void; onCancel: () => void }) {
   const addButton = useRef<HTMLButtonElement>(null);
   useEffect(() => addButton.current?.focus(), []);
   const add = useMutation({ mutationFn: () => createReminder(withoutKind(draft)), onSuccess: (c) => onAdded(c, draft.title) });
@@ -376,7 +376,7 @@ export function ReminderForm({
 const UNDO_MS = 8_000;
 
 /** "Added …" with Undo for 8 seconds. Undo deletes exactly what was just made. */
-function UndoToast({ toast, setToast }: { toast: NonNullable<Toast>; setToast: (t: Toast) => void }) {
+export function UndoToast({ toast, setToast }: { toast: NonNullable<Toast>; setToast: (t: Toast) => void }) {
   const queryClient = useQueryClient();
   useEffect(() => {
     const t = setTimeout(() => setToast(null), 'undone' in toast ? 3_000 : UNDO_MS);
